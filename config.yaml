@@ -1,0 +1,18 @@
+listen_addr: "127.0.0.1:3000"
+routes:
+  "/static":
+    type: "static"
+    root: "./static"
+  "/redirect":
+    type: "redirect"
+    target: "https://www.example.com"
+    status_code: 302
+  "/proxy":
+    type: "proxy"
+    target: "https://jsonplaceholder.typicode.com"
+  "/balance":
+    type: "load_balance"
+    targets:
+      - "https://jsonplaceholder.typicode.com"
+      - "https://httpbin.org"
+    strategy: "round_robin"
