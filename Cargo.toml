@@ -18,3 +18,8 @@ anyhow = "1.0"
 rand = "0.8"
 http = "0.2"
 http-body = "0.4"
+# TLS dependencies
+rustls = "0.21"
+rustls-pemfile = "1.0"
+tokio-rustls = "0.24"
+axum-server = { version = "0.5", features = ["tls-rustls"] }

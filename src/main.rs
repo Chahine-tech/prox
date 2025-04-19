@@ -21,6 +21,14 @@ type HyperClient = Client<HttpConnector>;
 struct ServerConfig {
     listen_addr: String,
     routes: HashMap<String, RouteConfig>,
+    #[serde(default)]
+    tls: Option<TlsConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TlsConfig {
+    cert_path: String,
+    key_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,15 +141,106 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Server listening on {}", addr);
     println!("Server listening on {}", addr);
 
-    match axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-    {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            tracing::error!("Server error: {}", err);
-            Err(anyhow::anyhow!("Server error: {}", err))
+    // Check if TLS is configured
+    if let Some(tls_config) = &config.tls {
+        // Start HTTPS server
+        tracing::info!("Starting server with TLS");
+
+        // Load certificate and private key
+        let cert_path = &tls_config.cert_path;
+        let key_path = &tls_config.key_path;
+
+        let cert = match fs::read(cert_path).await {
+            Ok(cert) => cert,
+            Err(err) => {
+                tracing::error!(
+                    "Failed to read certificate file: {}, error: {}",
+                    cert_path,
+                    err
+                );
+                return Err(anyhow::anyhow!("Failed to read certificate file: {}", err));
+            }
+        };
+
+        let key = match fs::read(key_path).await {
+            Ok(key) => key,
+            Err(err) => {
+                tracing::error!(
+                    "Failed to read private key file: {}, error: {}",
+                    key_path,
+                    err
+                );
+                return Err(anyhow::anyhow!("Failed to read private key file: {}", err));
+            }
+        };
+
+        // Parse the certificate and private key
+        let cert_chain = match rustls_pemfile::certs(&mut cert.as_slice()) {
+            Ok(certs) => certs.into_iter().map(rustls::Certificate).collect(),
+            Err(err) => {
+                tracing::error!("Failed to parse certificate: {}", err);
+                return Err(anyhow::anyhow!("Failed to parse certificate: {}", err));
+            }
+        };
+
+        let mut keys = match rustls_pemfile::pkcs8_private_keys(&mut key.as_slice()) {
+            Ok(keys) => keys,
+            Err(err) => {
+                tracing::error!("Failed to parse PKCS8 private key: {}", err);
+                // Try RSA key format if PKCS8 fails
+                match rustls_pemfile::rsa_private_keys(&mut key.as_slice()) {
+                    Ok(rsa_keys) => rsa_keys,
+                    Err(err) => {
+                        tracing::error!("Failed to parse RSA private key: {}", err);
+                        return Err(anyhow::anyhow!("Failed to parse private key: {}", err));
+                    }
+                }
+            }
+        };
+
+        if keys.is_empty() {
+            tracing::error!("No private keys found in the key file");
+            return Err(anyhow::anyhow!("No private keys found in the key file"));
         }
+
+        let server_key = rustls::PrivateKey(keys.remove(0));
+
+        // Configure TLS
+        let tls_config = rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, server_key)
+            .map_err(|err| {
+                tracing::error!("TLS configuration error: {}", err);
+                anyhow::anyhow!("TLS configuration error: {}", err)
+            })?;
+
+        // Create server configuration
+        let tls_acceptor = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config));
+
+        // Start TLS server
+        tracing::info!("Starting secure server on {}", addr);
+        axum_server::bind_rustls(addr, tls_acceptor)
+            .serve(app.into_make_service())
+            .await
+            .map_err(|err| {
+                tracing::error!("Server error: {}", err);
+                anyhow::anyhow!("Server error: {}", err)
+            })?;
+
+        Ok(())
+    } else {
+        // Standard HTTP server
+        tracing::info!("Starting server without TLS");
+        axum::Server::bind(&addr)
+            .serve(app.into_make_service())
+            .await
+            .map_err(|err| {
+                tracing::error!("Server error: {}", err);
+                anyhow::anyhow!("Server error: {}", err)
+            })?;
+
+        Ok(())
     }
 }
 
