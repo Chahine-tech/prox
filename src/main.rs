@@ -5,11 +5,13 @@ use axum::{
     Router,
 };
 use clap::Parser;
+use dashmap::DashMap;
 use hyper::{client::HttpConnector, Body, Client};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::time::Duration;
 use std::{convert::Infallible, net::SocketAddr, sync::Arc};
 use tokio::fs;
 use tower::{ServiceBuilder, ServiceExt};
@@ -23,12 +25,38 @@ struct ServerConfig {
     routes: HashMap<String, RouteConfig>,
     #[serde(default)]
     tls: Option<TlsConfig>,
+    #[serde(default)]
+    health_check: HealthCheckConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TlsConfig {
     cert_path: String,
     key_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+struct HealthCheckConfig {
+    enabled: bool,
+    interval_secs: u64,
+    timeout_secs: u64,
+    path: String,
+    unhealthy_threshold: u32,
+    healthy_threshold: u32,
+}
+
+impl Default for HealthCheckConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 10,
+            timeout_secs: 2,
+            path: "/health".to_string(),
+            unhealthy_threshold: 3,
+            healthy_threshold: 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +98,52 @@ struct AppState {
     client: HyperClient,
     // For round-robin load balancing
     counter: std::sync::atomic::AtomicUsize,
+    // For health checking
+    backend_health: Arc<DashMap<String, BackendHealth>>,
+    health_config: HealthCheckConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealthStatus {
+    Healthy,
+    Unhealthy,
+}
+
+#[derive(Debug)]
+struct BackendHealth {
+    status: std::sync::atomic::AtomicU8, // 0 = Unhealthy, 1 = Healthy
+    consecutive_successes: std::sync::atomic::AtomicU32,
+    consecutive_failures: std::sync::atomic::AtomicU32,
+}
+
+impl BackendHealth {
+    fn new(_target: String) -> Self {
+        Self {
+            status: std::sync::atomic::AtomicU8::new(1), // Start as healthy
+            consecutive_successes: std::sync::atomic::AtomicU32::new(0),
+            consecutive_failures: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    fn status(&self) -> HealthStatus {
+        if self.status.load(std::sync::atomic::Ordering::Relaxed) == 1 {
+            HealthStatus::Healthy
+        } else {
+            HealthStatus::Unhealthy
+        }
+    }
+
+    fn mark_healthy(&self) {
+        self.status.store(1, std::sync::atomic::Ordering::Relaxed);
+        self.consecutive_failures
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn mark_unhealthy(&self) {
+        self.status.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.consecutive_successes
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[tokio::main]
@@ -118,16 +192,37 @@ async fn main() -> anyhow::Result<()> {
     // Setup HTTP client for proxying
     let client = Client::new();
 
+    // Initialize backend health tracking
+    let backend_health = Arc::new(DashMap::new());
+    
+    // Collect all backend targets
+    let backends = collect_backends(&config.routes);
+    
+    // Initialize health status for all backends
+    for backend in &backends {
+        backend_health.insert(backend.clone(), BackendHealth::new(backend.clone()));
+    }
+
     // Create shared state
     let state = Arc::new(AppState {
         routes: config.routes,
         client,
         counter: std::sync::atomic::AtomicUsize::new(0),
+        backend_health,
+        health_config: config.health_check.clone(),
     });
 
     // Log configured routes
     for (prefix, route) in &state.routes {
         tracing::info!("Configured route: {} -> {:?}", prefix, route);
+    }
+
+    // Start health checking if enabled
+    if config.health_check.enabled && !backends.is_empty() {
+        let health_check_state = state.clone();
+        tokio::spawn(async move {
+            health_checker(health_check_state).await;
+        });
     }
 
     // Build our application with a route
@@ -242,6 +337,28 @@ async fn main() -> anyhow::Result<()> {
 
         Ok(())
     }
+}
+
+// Collect all load balanced targets for health checking
+fn collect_backends(routes: &HashMap<String, RouteConfig>) -> Vec<String> {
+    let mut backends = Vec::new();
+    
+    for route_config in routes.values() {
+        match route_config {
+            RouteConfig::LoadBalance { targets, .. } => {
+                backends.extend(targets.clone());
+            }
+            RouteConfig::Proxy { target } => {
+                backends.push(target.clone());
+            }
+            _ => {}
+        }
+    }
+    
+    // Deduplicate backends
+    backends.sort();
+    backends.dedup();
+    backends
 }
 
 async fn handle_request(
@@ -402,24 +519,148 @@ async fn handle_load_balance(
         return (StatusCode::INTERNAL_SERVER_ERROR, "No targets configured").into_response();
     }
 
+    // Filter for healthy backends only if health checking is enabled
+    let healthy_targets: Vec<&String> = if state.health_config.enabled {
+        targets
+            .iter()
+            .filter(|target| {
+                if let Some(backend) = state.backend_health.get(*target) {
+                    backend.status() == HealthStatus::Healthy
+                } else {
+                    // If we don't have health info, assume it's healthy
+                    true
+                }
+            })
+            .collect()
+    } else {
+        targets.iter().collect()
+    };
+
+    // If no healthy targets available, return error
+    if healthy_targets.is_empty() {
+        tracing::warn!("No healthy backends available for route prefix: {}", prefix);
+        return (StatusCode::SERVICE_UNAVAILABLE, "No healthy backends available").into_response();
+    }
+
     // Select target based on strategy
     let target = match strategy {
         LoadBalanceStrategy::RoundRobin => {
             let count = state
                 .counter
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let index = count % targets.len();
-            &targets[index]
+            let index = count % healthy_targets.len();
+            healthy_targets[index]
         }
         LoadBalanceStrategy::Random => {
             let mut rng = rand::thread_rng();
-            let index = rng.gen_range(0..targets.len());
-            &targets[index]
+            let index = rng.gen_range(0..healthy_targets.len());
+            healthy_targets[index]
         }
     };
 
-    tracing::debug!("Load balancing to target: {}", target);
+    tracing::debug!("Load balancing to healthy target: {}", target);
 
     // Forward to the selected target
     handle_proxy(&state.client, target, req, prefix).await
+}
+
+async fn health_checker(state: Arc<AppState>) {
+    let health_config = &state.health_config;
+    let client = Client::new();
+    let interval = Duration::from_secs(health_config.interval_secs);
+    let timeout = Duration::from_secs(health_config.timeout_secs);
+    
+    tracing::info!("Starting health checker with interval: {}s, timeout: {}s, path: {}", 
+        health_config.interval_secs, health_config.timeout_secs, health_config.path);
+    
+    loop {
+        // Sleep at the beginning to allow the server to start up
+        tokio::time::sleep(interval).await;
+        
+        // Check each backend
+        for backend_entry in state.backend_health.iter() {
+            let target = backend_entry.key().clone();
+            let backend_health = backend_entry.value();
+            
+            // Construct health check URL
+            let health_check_url = format!("{}{}", target, health_config.path);
+            
+            tracing::debug!("Health checking: {}", health_check_url);
+            
+            // Create request with timeout
+            let req = match Request::builder()
+                .method("GET")
+                .uri(&health_check_url)
+                .body(Body::empty()) {
+                    Ok(req) => req,
+                    Err(err) => {
+                        tracing::error!("Failed to build health check request for {}: {}", health_check_url, err);
+                        continue;
+                    }
+                };
+            
+            // Perform the health check with timeout
+            let result = tokio::time::timeout(timeout, client.request(req)).await;
+            
+            match result {
+                Ok(Ok(response)) => {
+                    let status = response.status();
+                    
+                    // Check if status code indicates healthy (2xx range)
+                    if status.is_success() {
+                        // Increment success counter
+                        let successes = backend_health.consecutive_successes
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        
+                        // If we've reached the threshold, mark as healthy
+                        if successes >= health_config.healthy_threshold 
+                            && backend_health.status() == HealthStatus::Unhealthy {
+                                
+                            tracing::info!("Backend {} is now HEALTHY (after {} consecutive successes)", 
+                                           target, successes);
+                            backend_health.mark_healthy();
+                        }
+                    } else {
+                        // Non-2xx status is a failure
+                        handle_health_check_failure(&target, backend_health, health_config, 
+                                                   format!("Unhealthy status code: {}", status).as_str());
+                    }
+                },
+                Ok(Err(err)) => {
+                    handle_health_check_failure(&target, backend_health, health_config, 
+                                               format!("Request failed: {}", err).as_str());
+                },
+                Err(_) => {
+                    handle_health_check_failure(&target, backend_health, health_config, "Request timed out");
+                }
+            }
+        }
+    }
+}
+
+fn handle_health_check_failure(
+    target: &str, 
+    backend_health: &BackendHealth, 
+    health_config: &HealthCheckConfig, 
+    reason: &str
+) {
+    // Increment failure counter
+    let failures = backend_health.consecutive_failures
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    
+    // Reset success counter
+    backend_health.consecutive_successes
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    
+    // If we've reached the threshold, mark as unhealthy
+    if failures >= health_config.unhealthy_threshold 
+        && backend_health.status() == HealthStatus::Healthy {
+            
+        tracing::warn!("Backend {} is now UNHEALTHY (after {} consecutive failures): {}", 
+                      target, failures, reason);
+        backend_health.mark_unhealthy();
+    } else {
+        tracing::debug!("Health check failed for {}: {} (failures: {}/{})", 
+                      target, reason, failures, health_config.unhealthy_threshold);
+    }
 }

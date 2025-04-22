@@ -9,6 +9,7 @@ A lightweight, configurable reverse proxy server written in Rust.
 - **Load Balancing**: Distribute traffic among multiple backends using:
   - Round-robin strategy
   - Random selection
+- **Health Checking**: Automatically monitor backend health and route traffic only to healthy servers
 - **Redirects**: Redirect requests to different URLs with configurable status codes
 - **TLS Support**: Secure your service with TLS/HTTPS
 - **Prefix Routing**: Route requests based on URL path prefixes
@@ -92,6 +93,38 @@ Options:
   -h, --help           Print help
   -V, --version        Print version
 ```
+
+## Health Checking
+
+Prox includes built-in health checking for backend servers, ensuring that traffic is only routed to operational backends. This is particularly useful for load balancing scenarios.
+
+### Health Check Configuration
+
+```yaml
+health_check:
+  enabled: true             # Enable/disable health checking
+  interval_secs: 10         # Time between health checks (seconds)
+  timeout_secs: 2           # Health check request timeout (seconds)
+  path: "/health"           # Path to check on backends
+  unhealthy_threshold: 3    # Failed checks before marking unhealthy
+  healthy_threshold: 2      # Successful checks before marking healthy
+```
+
+### How It Works
+
+1. Prox periodically checks all backend servers using the configured path
+2. Backends returning 2xx status codes are considered healthy
+3. A backend is marked unhealthy after `unhealthy_threshold` consecutive failed checks
+4. An unhealthy backend is marked healthy after `healthy_threshold` consecutive successful checks
+5. Load balancing only routes traffic to healthy backends
+6. If all backends are unhealthy, a 503 Service Unavailable response is returned
+
+### Implementing Health Endpoints
+
+For accurate health checking, implement a `/health` endpoint (or whatever path you configure) on your backend services that:
+
+- Returns a 200 status code when the service is operational
+- Returns a non-2xx status code or fails to respond when the service is unhealthy
 
 ## TLS Configuration
 

@@ -23,3 +23,5 @@ rustls = "0.21"
 rustls-pemfile = "1.0"
 tokio-rustls = "0.24"
 axum-server = { version = "0.5", features = ["tls-rustls"] }
+# Health checking dependencies
+dashmap = "5.4.0"
