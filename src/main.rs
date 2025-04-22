@@ -6,7 +6,9 @@ use axum::{
 };
 use clap::Parser;
 use dashmap::DashMap;
-use hyper::{client::HttpConnector, Body, Client};
+use hyper::{Body, Client};
+use hyper::client::connect::HttpConnector as HyperHttpConnector;
+use hyper_tls::HttpsConnector;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -17,7 +19,8 @@ use tokio::fs;
 use tower::{ServiceBuilder, ServiceExt};
 use tower_http::services::ServeDir;
 
-type HyperClient = Client<HttpConnector>;
+// Use HTTPS-capable client
+type HyperClient = Client<HttpsConnector<HyperHttpConnector>>;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ServerConfig {
@@ -27,6 +30,8 @@ struct ServerConfig {
     tls: Option<TlsConfig>,
     #[serde(default)]
     health_check: HealthCheckConfig,
+    #[serde(default)]
+    backend_health_paths: HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -101,6 +106,7 @@ struct AppState {
     // For health checking
     backend_health: Arc<DashMap<String, BackendHealth>>,
     health_config: HealthCheckConfig,
+    backend_paths: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,8 +195,9 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Setup HTTP client for proxying
-    let client = Client::new();
+    // Setup HTTP client for proxying with HTTPS support
+    let https = HttpsConnector::new();
+    let client = Client::builder().build::<_, Body>(https);
 
     // Initialize backend health tracking
     let backend_health = Arc::new(DashMap::new());
@@ -210,6 +217,7 @@ async fn main() -> anyhow::Result<()> {
         counter: std::sync::atomic::AtomicUsize::new(0),
         backend_health,
         health_config: config.health_check.clone(),
+        backend_paths: config.backend_health_paths.clone(),
     });
 
     // Log configured routes
@@ -566,11 +574,11 @@ async fn handle_load_balance(
 
 async fn health_checker(state: Arc<AppState>) {
     let health_config = &state.health_config;
-    let client = Client::new();
+    let client = &state.client; // Use the HTTPS-capable client from AppState
     let interval = Duration::from_secs(health_config.interval_secs);
     let timeout = Duration::from_secs(health_config.timeout_secs);
     
-    tracing::info!("Starting health checker with interval: {}s, timeout: {}s, path: {}", 
+    tracing::info!("Starting health checker with interval: {}s, timeout: {}s, default path: {}", 
         health_config.interval_secs, health_config.timeout_secs, health_config.path);
     
     loop {
@@ -582,8 +590,17 @@ async fn health_checker(state: Arc<AppState>) {
             let target = backend_entry.key().clone();
             let backend_health = backend_entry.value();
             
+            // Get backend-specific health check path or use default
+            let backend_path = match state.backend_paths.get(&target) {
+                Some(path) => {
+                    tracing::debug!("Using custom health path for {}: {}", target, path);
+                    path.clone()
+                },
+                None => health_config.path.clone()
+            };
+            
             // Construct health check URL
-            let health_check_url = format!("{}{}", target, health_config.path);
+            let health_check_url = format!("{}{}", target, backend_path);
             
             tracing::debug!("Health checking: {}", health_check_url);
             

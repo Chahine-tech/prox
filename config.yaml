@@ -1,6 +1,5 @@
 listen_addr: "127.0.0.1:3000"
 # TLS configuration
-# Uncomment the following section to enable HTTPS:
 tls:
   cert_path: "./certs/cert.pem"
   key_path: "./certs/key.pem"
@@ -9,10 +8,15 @@ tls:
 health_check:
   enabled: true
   interval_secs: 10
-  timeout_secs: 2
-  path: "/health"
+  timeout_secs: 5
+  path: "/health"      # Default path to check
   unhealthy_threshold: 3
   healthy_threshold: 2
+
+# Backend-specific health check paths
+backend_health_paths:
+  "https://jsonplaceholder.typicode.com": "/posts/1"
+  "https://httpbin.org": "/get"
 
 routes:
   "/static":
