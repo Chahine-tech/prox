@@ -26,3 +26,8 @@ tokio-rustls = "0.24"
 axum-server = { version = "0.5", features = ["tls-rustls"] }
 # Health checking dependencies
 dashmap = "5.4.0"
+# Additional dependencies for hexagonal architecture
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+bytes = "1.0"
+http-body-util = "0.1"

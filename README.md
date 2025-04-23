@@ -1,162 +1,95 @@
-# Prox
+# Prox: A Lightweight Reverse Proxy with Hexagonal Architecture
 
-A lightweight, configurable reverse proxy server written in Rust.
+Prox is a lightweight reverse proxy built in Rust, implementing a hexagonal architecture (also known as ports and adapters architecture) for maintainability, testability, and flexibility.
 
 ## Features
 
-- **Static File Serving**: Serve static files from a local directory
-- **HTTP/HTTPS Proxying**: Forward requests to backend servers
-- **Load Balancing**: Distribute traffic among multiple backends using:
-  - Round-robin strategy
-  - Random selection
-- **Health Checking**: Automatically monitor backend health and route traffic only to healthy servers
-- **Redirects**: Redirect requests to different URLs with configurable status codes
-- **TLS Support**: Secure your service with TLS/HTTPS
-- **Prefix Routing**: Route requests based on URL path prefixes
+- HTTP/HTTPS support with TLS
+- Static file serving
+- HTTP redirects
+- Load balancing (round-robin and random strategies)
+- Health checking for backend services
+- Configurable via YAML
 
-## Installation
+## Architecture
 
-### From Source
+Prox follows a hexagonal architecture pattern, which separates the application into three main areas:
 
-Ensure you have Rust and Cargo installed, then:
+1. **Core Domain** - Contains the business logic of the application
+2. **Ports** - Interfaces that define how the core interacts with the outside world
+3. **Adapters** - Implementations of the ports that connect to external systems
 
-```bash
-# Clone the repository
-git clone https://github.com/Chahine-tech/prox.git
-cd prox
-
-# Build the project
-cargo build --release
-
-# Run
-./target/release/prox
+```
+src/
+├── main.rs               # Application entry point 
+├── config/               # Configuration handling
+│   ├── loader.rs         # Configuration loading logic
+│   ├── models.rs         # Configuration data structures
+│   └── mod.rs           
+├── core/                 # Domain logic
+│   ├── proxy.rs          # Core proxy service logic
+│   ├── backend.rs        # Backend health tracking
+│   └── mod.rs
+├── ports/                # Interfaces
+│   ├── http_server.rs    # HTTP server interface
+│   ├── http_client.rs    # HTTP client interface
+│   ├── file_system.rs    # File system interface
+│   └── mod.rs
+└── adapters/             # Implementations of the ports
+    ├── http/             # HTTP server implementation
+    │   ├── server.rs     # Hyper server implementation
+    │   └── mod.rs
+    ├── http_handler.rs   # HTTP request handler
+    ├── http_client.rs    # HTTP client implementation
+    ├── file_system.rs    # Static file handling
+    ├── health_checker.rs # Health checking implementation
+    └── mod.rs
 ```
 
-## Configuration
+### Benefits of Hexagonal Architecture
 
-Prox uses a YAML configuration file. By default, it looks for `config.yaml` in the current directory.
+1. **Testability**: Core domain logic can be tested independently of HTTP, file systems, etc.
+2. **Flexibility**: Components can be replaced without affecting the rest of the system
+3. **Separation of Concerns**: Clean boundaries between different parts of the application
+4. **Domain Focus**: Business logic is isolated from technical details
 
-### Example Configuration
+## Usage
+
+1. Configure your reverse proxy in `config.yaml`
+2. Run the proxy: `cargo run`
+
+## Configuration Example
 
 ```yaml
 listen_addr: "127.0.0.1:8080"
 routes:
-  "/api/": 
-    type: "proxy"
-    target: "http://api-server:3000/"
-  
-  "/static/": 
+  "/static":
     type: "static"
     root: "./static"
-  
-  "/docs/": 
-    type: "redirect"
-    target: "https://docs.example.com"
-    status_code: 301
-  
-  "/app/": 
+  "/api":
+    type: "proxy"
+    target: "http://localhost:3000"
+  "/app":
     type: "load_balance"
-    targets: 
-      - "http://app-server-1:8080/"
-      - "http://app-server-2:8080/"
-      - "http://app-server-3:8080/"
     strategy: "round_robin"
-
-# Optional TLS configuration
-tls:
-  cert_path: "./certs/cert.pem"
-  key_path: "./certs/key.pem"
-```
-
-### Route Types
-
-- **static**: Serve files from a local directory
-- **proxy**: Forward requests to a target server
-- **redirect**: Redirect requests to another URL
-- **load_balance**: Distribute traffic among multiple backends
-
-## Usage
-
-```bash
-# Run with default config.yaml
-./prox
-
-# Specify a custom config file
-./prox --config my-config.yaml
-```
-
-## Command Line Options
-
-```
-Options:
-  -c, --config <FILE>  Specify config file path [default: config.yaml]
-  -h, --help           Print help
-  -V, --version        Print version
-```
-
-## Health Checking
-
-Prox includes built-in health checking for backend servers, ensuring that traffic is only routed to operational backends. This is particularly useful for load balancing scenarios.
-
-### Health Check Configuration
-
-```yaml
+    targets:
+      - "http://localhost:3001"
+      - "http://localhost:3002"
+  "/old":
+    type: "redirect"
+    target: "/new"
+    status_code: 301
 health_check:
-  enabled: true             # Enable/disable health checking
-  interval_secs: 10         # Time between health checks (seconds)
-  timeout_secs: 2           # Health check request timeout (seconds)
-  path: "/health"           # Path to check on backends
-  unhealthy_threshold: 3    # Failed checks before marking unhealthy
-  healthy_threshold: 2      # Successful checks before marking healthy
-```
-
-### How It Works
-
-1. Prox periodically checks all backend servers using the configured path
-2. Backends returning 2xx status codes are considered healthy
-3. A backend is marked unhealthy after `unhealthy_threshold` consecutive failed checks
-4. An unhealthy backend is marked healthy after `healthy_threshold` consecutive successful checks
-5. Load balancing only routes traffic to healthy backends
-6. If all backends are unhealthy, a 503 Service Unavailable response is returned
-
-### Implementing Health Endpoints
-
-For accurate health checking, implement a `/health` endpoint (or whatever path you configure) on your backend services that:
-
-- Returns a 200 status code when the service is operational
-- Returns a non-2xx status code or fails to respond when the service is unhealthy
-
-## TLS Configuration
-
-To enable HTTPS, add TLS configuration to your config file:
-
-```yaml
-tls:
-  cert_path: "./certs/cert.pem"
-  key_path: "./certs/key.pem"
-```
-
-## Development
-
-### Requirements
-
-- Rust 1.56+
-- Cargo
-
-### Building
-
-```bash
-# Development build
-cargo build
-
-# Release build
-cargo build --release
+  enabled: true
+  interval_secs: 10
+  timeout_secs: 2
+  path: "/health"
+  unhealthy_threshold: 3
+  healthy_threshold: 2
+backend_health_paths:
+  "http://localhost:3001": "/custom-health"
 ```
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+[MIT License](LICENSE)

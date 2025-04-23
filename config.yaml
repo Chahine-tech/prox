@@ -19,6 +19,10 @@ backend_health_paths:
   "https://httpbin.org": "/get"
 
 routes:
+  "/":  # Add root route that redirects to /static
+    type: "redirect"
+    target: "/static"
+    status_code: 302
   "/static":
     type: "static"
     root: "./static"
