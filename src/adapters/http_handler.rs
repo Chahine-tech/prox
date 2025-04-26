@@ -5,10 +5,9 @@ use std::pin::Pin;
 use anyhow::Result;
 use axum::response::{IntoResponse, Response};
 use hyper::{Body, Request, StatusCode};
-use rand::Rng;
 
 use crate::config::{LoadBalanceStrategy, RouteConfig};
-use crate::core::ProxyService;
+use crate::core::{ProxyService, LoadBalancerFactory};
 use crate::ports::file_system::FileSystem;
 use crate::ports::http_client::HttpClient;
 use crate::ports::http_server::HttpHandler;
@@ -131,26 +130,20 @@ impl HyperHandler {
             return (StatusCode::SERVICE_UNAVAILABLE, "No healthy backends available").into_response();
         }
 
-        // Select target based on strategy
-        let target = match strategy {
-            LoadBalanceStrategy::RoundRobin => {
-                // Atomically increment and get the counter value
-                let count = self.proxy_service.counter
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                // Calculate index with remainder to cycle through targets
-                &healthy_targets[count % healthy_targets.len()]
-            }
-            LoadBalanceStrategy::Random => {
-                // Generate a random index within the range of healthy targets
-                let index = rand::thread_rng().gen_range(0..healthy_targets.len());
-                &healthy_targets[index]
+        // Create load balancing strategy and select target
+        let lb_strategy = LoadBalancerFactory::create_strategy(strategy);
+        let target = match lb_strategy.select_target(&healthy_targets) {
+            Some(target) => target,
+            None => {
+                tracing::error!("Load balancer failed to select a target");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Load balancer error").into_response();
             }
         };
 
         tracing::debug!("Load balancing to healthy target: {}", target);
 
         // Forward to the selected target
-        self.handle_proxy(target, req, prefix).await
+        self.handle_proxy(&target, req, prefix).await
     }
 }
 

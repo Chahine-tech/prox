@@ -49,8 +49,8 @@ impl HealthChecker {
             
             tracing::info!("Running health checks on all backends...");
             
-            // Check each backend
-            for backend_entry in self.proxy_service.backend_health.iter() {
+            // Check each backend using the getter method instead of direct field access
+            for backend_entry in self.proxy_service.backend_health().iter() {
                 let target = backend_entry.key().clone();
                 let backend_health = backend_entry.value();
                 

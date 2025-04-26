@@ -6,9 +6,8 @@ use crate::config::{HealthCheckConfig, HealthStatus, RouteConfig, ServerConfig};
 use crate::core::backend::BackendHealth;
 
 pub struct ProxyService {
-    pub config: Arc<ServerConfig>,
-    pub backend_health: Arc<DashMap<String, BackendHealth>>,
-    pub counter: std::sync::atomic::AtomicUsize,
+    config: Arc<ServerConfig>,
+    backend_health: Arc<DashMap<String, BackendHealth>>,
 }
 
 impl ProxyService {
@@ -27,8 +26,12 @@ impl ProxyService {
         Self {
             config,
             backend_health,
-            counter: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+    
+    /// Get a reference to the backend health map
+    pub fn backend_health(&self) -> &DashMap<String, BackendHealth> {
+        &self.backend_health
     }
 
     // Helper to collect all backends from route configuration

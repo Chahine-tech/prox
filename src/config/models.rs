@@ -70,8 +70,19 @@ pub enum LoadBalanceStrategy {
     Random,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HealthStatus {
+    #[serde(rename = "healthy")]
     Healthy,
+    #[serde(rename = "unhealthy")]
     Unhealthy,
+}
+
+impl std::fmt::Display for HealthStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HealthStatus::Healthy => write!(f, "healthy"),
+            HealthStatus::Unhealthy => write!(f, "unhealthy"),
+        }
+    }
 }

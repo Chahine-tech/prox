@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use clap::Parser;
 use tracing_subscriber;
 use tokio;
@@ -34,13 +34,8 @@ async fn main() -> Result<()> {
 
     // Load configuration
     tracing::info!("Loading configuration from {}", args.config);
-    let config = match load_config(&args.config).await {
-        Ok(config) => config,
-        Err(err) => {
-            tracing::error!("Failed to load config: {}", err);
-            return Err(err);
-        }
-    };
+    let config = load_config(&args.config).await
+        .with_context(|| format!("Failed to load config from {}", args.config))?;
 
     // Create shared configuration
     let config = Arc::new(config);

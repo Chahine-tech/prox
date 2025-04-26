@@ -1,8 +1,8 @@
 listen_addr: "127.0.0.1:3002"
 # TLS configuration - uncomment to enable TLS
-# tls:
-#   cert_path: "./certs/cert.pem"
-#   key_path: "./certs/key.pem"
+tls:
+  cert_path: "./certs/cert.pem"
+  key_path: "./certs/key.pem"
 
 # Health check configuration
 health_check:
@@ -15,8 +15,8 @@ health_check:
 
 # Backend-specific health check paths
 backend_health_paths:
-  "https://jsonplaceholder.typicode.com": "/posts/1"
   "https://httpbin.org": "/get"
+  "https://postman-echo.com": "/get"
 
 routes:
   "/":  # Add root route that redirects to /static
@@ -32,10 +32,10 @@ routes:
     status_code: 302
   "/proxy":
     type: "proxy"
-    target: "https://jsonplaceholder.typicode.com"
+    target: "https://httpbin.org"
   "/balance":
     type: "load_balance"
     targets:
-      - "https://jsonplaceholder.typicode.com"
       - "https://httpbin.org"
+      - "https://postman-echo.com"
     strategy: "round_robin"
