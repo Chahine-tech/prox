@@ -161,7 +161,7 @@ impl HyperHandler {
 }
 
 impl HttpHandler for HyperHandler {
-    fn handle_request(&self, req: Request<Body>) -> Pin<Box<dyn Future<Output = Result<Response<Body>, anyhow::Error>> + Send + '_>> {
+    fn handle_request<'a>(&'a self, req: Request<Body>) -> Pin<Box<dyn Future<Output = Result<Response<Body>, anyhow::Error>> + Send + 'a>> {
         Box::pin(async move {
             let uri = req.uri().clone();
             let path = uri.path();

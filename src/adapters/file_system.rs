@@ -18,7 +18,7 @@ impl TowerFileSystem {
 }
 
 impl FileSystem for TowerFileSystem {
-    fn serve_file(&self, root: &str, path: &str, req: Request<Body>) -> Pin<Box<dyn Future<Output = Result<Response<Body>>> + Send + '_>> {
+    fn serve_file<'a>(&'a self, root: &'a str, path: &'a str, req: Request<Body>) -> Pin<Box<dyn Future<Output = Result<Response<Body>>> + Send + 'a>> {
         let root = root.to_string();
         let path = path.to_string();
         

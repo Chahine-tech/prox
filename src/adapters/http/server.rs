@@ -71,7 +71,7 @@ impl HyperServer {
 }
 
 impl HttpServer for HyperServer {
-    fn run(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+    fn run<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             // Check if TLS is configured
             if let Some(tls_config) = &self.config.tls {

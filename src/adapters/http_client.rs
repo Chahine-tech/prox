@@ -17,21 +17,34 @@ impl HyperHttpClient {
         let https = hyper_tls::HttpsConnector::new();
         let client = hyper::Client::builder().build::<_, Body>(https);
         
+        tracing::info!("Created new HTTPS-capable HTTP client");
         Self { client }
     }
 }
 
 impl HttpClient for HyperHttpClient {
-    fn send_request(&self, req: Request<Body>) -> Pin<Box<dyn Future<Output = Result<Response<Body>>> + Send + '_>> {
+    fn send_request<'a>(&'a self, req: Request<Body>) -> Pin<Box<dyn Future<Output = Result<Response<Body>>> + Send + 'a>> {
         let client = self.client.clone();
+        let method = req.method().clone();
+        let uri = req.uri().clone();
         
         Box::pin(async move {
-            let response = client.request(req).await?;
-            Ok(response)
+            tracing::info!("Sending request: {} {}", method, uri);
+            
+            match client.request(req).await {
+                Ok(response) => {
+                    tracing::info!("Received response from {} {}: status={}", method, uri, response.status());
+                    Ok(response)
+                },
+                Err(err) => {
+                    tracing::error!("Error making request to {} {}: {}", method, uri, err);
+                    Err(anyhow::anyhow!("HTTP request error: {}", err))
+                }
+            }
         })
     }
     
-    fn health_check(&self, url: &str, timeout_secs: u64) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
+    fn health_check<'a>(&'a self, url: &'a str, timeout_secs: u64) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + 'a>> {
         let client = self.client.clone();
         let url = url.to_string();
         
@@ -42,6 +55,8 @@ impl HttpClient for HyperHttpClient {
                 .uri(&url)
                 .body(Body::empty())?;
             
+            tracing::debug!("Health checking URL: {}", url);
+            
             // Perform the health check with timeout
             let timeout_duration = Duration::from_secs(timeout_secs);
             let result = timeout(timeout_duration, client.request(req)).await;
@@ -49,10 +64,16 @@ impl HttpClient for HyperHttpClient {
             match result {
                 Ok(Ok(response)) => {
                     // Check if status code is in the 2xx range
-                    Ok(response.status().is_success())
+                    let is_healthy = response.status().is_success();
+                    tracing::debug!("Health check for {} result: {}", url, is_healthy);
+                    Ok(is_healthy)
                 },
-                _ => {
-                    // Either timeout or error means unhealthy
+                Ok(Err(err)) => {
+                    tracing::debug!("Health check error for {}: {}", url, err);
+                    Ok(false)
+                },
+                Err(_) => {
+                    tracing::debug!("Health check timeout for {}", url);
                     Ok(false)
                 }
             }
