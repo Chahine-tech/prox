@@ -10,6 +10,8 @@ Prox is a lightweight reverse proxy built in Rust, implementing a hexagonal arch
 - Load balancing (round-robin and random strategies)
 - Health checking for backend services
 - Configurable via YAML
+- Custom error handling with type safety
+- Browser-like request headers for improved compatibility
 
 ## Architecture
 
@@ -29,6 +31,7 @@ src/
 ├── core/                 # Domain logic
 │   ├── proxy.rs          # Core proxy service logic
 │   ├── backend.rs        # Backend health tracking
+│   ├── load_balancer.rs  # Load balancing strategies
 │   └── mod.rs
 ├── ports/                # Interfaces
 │   ├── http_server.rs    # HTTP server interface
@@ -55,40 +58,81 @@ src/
 
 ## Usage
 
-1. Configure your reverse proxy in `config.yaml`
-2. Run the proxy: `cargo run`
+1. Generate self-signed certificates for HTTPS (or use your own):
+   ```bash
+   mkdir -p certs
+   openssl req -x509 -newkey rsa:4096 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes -subj '/CN=localhost'
+   ```
+
+2. Configure your reverse proxy in `config.yaml`
+
+3. Run the proxy: `cargo run`
 
 ## Configuration Example
 
 ```yaml
-listen_addr: "127.0.0.1:8080"
-routes:
-  "/static":
-    type: "static"
-    root: "./static"
-  "/api":
-    type: "proxy"
-    target: "http://localhost:3000"
-  "/app":
-    type: "load_balance"
-    strategy: "round_robin"
-    targets:
-      - "http://localhost:3001"
-      - "http://localhost:3002"
-  "/old":
-    type: "redirect"
-    target: "/new"
-    status_code: 301
+listen_addr: "127.0.0.1:3002"
+# TLS configuration
+tls:
+  cert_path: "./certs/cert.pem"
+  key_path: "./certs/key.pem"
+
+# Health check configuration
 health_check:
   enabled: true
   interval_secs: 10
-  timeout_secs: 2
+  timeout_secs: 5
   path: "/health"
   unhealthy_threshold: 3
   healthy_threshold: 2
+
+# Backend-specific health check paths
 backend_health_paths:
-  "http://localhost:3001": "/custom-health"
+  "https://httpbin.org": "/get"
+  "https://postman-echo.com": "/get"
+
+routes:
+  "/":  # Root route that redirects to /static
+    type: "redirect"
+    target: "/static"
+    status_code: 302
+  "/static":
+    type: "static"
+    root: "./static"
+  "/redirect":
+    type: "redirect"
+    target: "https://www.example.com"
+    status_code: 302
+  "/proxy":
+    type: "proxy"
+    target: "https://httpbin.org"
+  "/balance":
+    type: "load_balance"
+    targets:
+      - "https://httpbin.org"
+      - "https://postman-echo.com" 
+    strategy: "round_robin"
 ```
+
+## Testing
+
+You can test the proxy using curl:
+
+```bash
+# Test static content
+curl -k https://127.0.0.1:3002/static
+
+# Test redirection
+curl -k -L https://127.0.0.1:3002/
+
+# Test proxy
+curl -k https://127.0.0.1:3002/proxy/get
+
+# Test load balancing (run multiple times to see round-robin in action)
+curl -k https://127.0.0.1:3002/balance/get
+```
+
+Note: The `-k` flag is used to skip certificate validation for self-signed certificates.
 
 ## License
 
