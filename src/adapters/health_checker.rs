@@ -105,11 +105,11 @@ impl HealthChecker {
         health_config: &HealthCheckConfig, 
         reason: &str
     ) {
-        // Increment failure counter
+        // Atomically increment failure counter and get new value
         let failures = backend_health.consecutive_failures
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         
-        // Reset success counter
+        // Reset success counter atomically
         backend_health.consecutive_successes
             .store(0, std::sync::atomic::Ordering::Relaxed);
         
@@ -117,12 +117,12 @@ impl HealthChecker {
         tracing::info!("Health check failed for {}: {} (failures: {}/{})", 
                       target, reason, failures, health_config.unhealthy_threshold);
         
-        // If we've reached the threshold, mark as unhealthy
+        // Mark as unhealthy if threshold reached and current status is healthy
         if failures >= health_config.unhealthy_threshold as u32
             && backend_health.status() == HealthStatus::Healthy {
-                
+            
             tracing::warn!("Backend {} is now UNHEALTHY (after {} consecutive failures): {}", 
-                          target, failures, reason);
+                         target, failures, reason);
             backend_health.mark_unhealthy();
         }
     }

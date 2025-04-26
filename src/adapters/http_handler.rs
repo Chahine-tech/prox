@@ -60,27 +60,22 @@ impl HyperHandler {
         let rel_path = &path[prefix.len()..];
         let redirect_url = format!("{}{}", target, rel_path);
 
-        let status = match status_code
-            .map(StatusCode::from_u16)
-            .unwrap_or(Ok(StatusCode::TEMPORARY_REDIRECT))
-        {
-            Ok(status) => status,
-            Err(_) => StatusCode::TEMPORARY_REDIRECT,
-        };
+        // Try to create a status code from the provided value or default to TEMPORARY_REDIRECT
+        let status = status_code
+            .and_then(|code| StatusCode::from_u16(code).ok())
+            .unwrap_or(StatusCode::TEMPORARY_REDIRECT);
 
         tracing::debug!("Redirecting to: {} with status: {}", redirect_url, status);
 
-        match Response::builder()
+        Response::builder()
             .status(status)
             .header("Location", redirect_url)
             .body(Body::empty())
-        {
-            Ok(response) => response.into_response(),
-            Err(err) => {
+            .map(IntoResponse::into_response)
+            .unwrap_or_else(|err| {
                 tracing::error!("Failed to build redirect response: {}", err);
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
-            }
-        }
+            })
     }
     
     async fn handle_proxy(&self, target: &str, mut req: Request<Body>, prefix: &str) -> Response {
@@ -94,26 +89,24 @@ impl HyperHandler {
 
         // Construct the new URI
         let target_uri = format!("{}{}{}", target, rel_path, query);
-        let uri: hyper::Uri = match target_uri.parse() {
-            Ok(uri) => uri,
+        
+        // Parse and update the request URI
+        match target_uri.parse::<hyper::Uri>() {
+            Ok(uri) => {
+                tracing::debug!("Proxying request to: {}", uri);
+                *req.uri_mut() = uri;
+                
+                // Forward the request through our HTTP client
+                self.http_client.send_request(req).await
+                    .map(IntoResponse::into_response)
+                    .unwrap_or_else(|err| {
+                        tracing::error!("Proxy error: {:?}", err);
+                        (StatusCode::BAD_GATEWAY, "Bad Gateway").into_response()
+                    })
+            }
             Err(err) => {
                 tracing::error!("Failed to parse target URI: {}, error: {}", target_uri, err);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Invalid target URI").into_response();
-            }
-        };
-
-        // Log the URI before moving it
-        tracing::debug!("Proxying request to: {}", uri);
-
-        // Update request URI
-        *req.uri_mut() = uri;
-
-        // Forward the request through our HTTP client
-        match self.http_client.send_request(req).await {
-            Ok(response) => response.into_response(),
-            Err(err) => {
-                tracing::error!("Proxy error: {:?}", err);
-                (StatusCode::BAD_GATEWAY, "Bad Gateway").into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, "Invalid target URI").into_response()
             }
         }
     }
@@ -141,14 +134,15 @@ impl HyperHandler {
         // Select target based on strategy
         let target = match strategy {
             LoadBalanceStrategy::RoundRobin => {
+                // Atomically increment and get the counter value
                 let count = self.proxy_service.counter
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let index = count % healthy_targets.len();
-                &healthy_targets[index]
+                // Calculate index with remainder to cycle through targets
+                &healthy_targets[count % healthy_targets.len()]
             }
             LoadBalanceStrategy::Random => {
-                let mut rng = rand::thread_rng();
-                let index = rng.gen_range(0..healthy_targets.len());
+                // Generate a random index within the range of healthy targets
+                let index = rand::thread_rng().gen_range(0..healthy_targets.len());
                 &healthy_targets[index]
             }
         };

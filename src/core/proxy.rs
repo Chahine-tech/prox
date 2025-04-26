@@ -33,19 +33,13 @@ impl ProxyService {
 
     // Helper to collect all backends from route configuration
     pub fn collect_backends(routes: &HashMap<String, RouteConfig>) -> Vec<String> {
-        let mut backends = Vec::new();
-        
-        for route_config in routes.values() {
-            match route_config {
-                RouteConfig::LoadBalance { targets, .. } => {
-                    backends.extend(targets.clone());
-                }
-                RouteConfig::Proxy { target } => {
-                    backends.push(target.clone());
-                }
-                _ => {}
-            }
-        }
+        let mut backends = routes.values()
+            .flat_map(|route_config| match route_config {
+                RouteConfig::LoadBalance { targets, .. } => targets.clone(),
+                RouteConfig::Proxy { target } => vec![target.clone()],
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>();
         
         // Deduplicate backends
         backends.sort();
@@ -55,17 +49,11 @@ impl ProxyService {
 
     // Find matching route for a path
     pub fn find_matching_route(&self, path: &str) -> Option<(String, RouteConfig)> {
-        let mut matched_route = None;
-        let mut matched_prefix = "";
-
-        for (route_prefix, route_config) in &self.config.routes {
-            if path.starts_with(route_prefix) && route_prefix.len() > matched_prefix.len() {
-                matched_route = Some(route_config.clone());
-                matched_prefix = route_prefix;
-            }
-        }
-        
-        matched_route.map(|route| (matched_prefix.to_string(), route))
+        self.config.routes
+            .iter()
+            .filter(|(prefix, _)| path.starts_with(*prefix))
+            .max_by_key(|(prefix, _)| prefix.len())
+            .map(|(prefix, config)| (prefix.to_string(), config.clone()))
     }
 
     // Get health config
@@ -83,12 +71,10 @@ impl ProxyService {
     
     // Get the health status of a backend
     pub fn get_backend_health_status(&self, target: &str) -> HealthStatus {
-        if let Some(backend) = self.backend_health.get(target) {
-            backend.status()
-        } else {
-            // If no health info exists, assume healthy
-            HealthStatus::Healthy
-        }
+        self.backend_health
+            .get(target)
+            .map(|backend| backend.status())
+            .unwrap_or(HealthStatus::Healthy)
     }
     
     // Get filtered healthy backends
