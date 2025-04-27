@@ -5,17 +5,12 @@ use clap::Parser;
 use tracing_subscriber;
 use tokio;
 
-mod adapters;
-mod config;
-mod core;
-mod ports;
-
-use crate::adapters::health_checker::HealthChecker;
-use crate::adapters::http::HyperServer;
-use crate::adapters::{HyperHttpClient, TowerFileSystem};
-use crate::config::load_config;
-use crate::core::ProxyService;
-use crate::ports::{file_system::FileSystem, http_client::HttpClient, http_server::HttpServer};
+// Import directly from crate root where they are re-exported
+use prox::{
+    HyperServer, HealthChecker, TowerFileSystem, HyperHttpClient, ProxyService,
+    config::loader::load_config,
+    ports::{file_system::FileSystem, http_client::HttpClient, http_server::HttpServer}
+};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]

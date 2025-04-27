@@ -3,7 +3,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 
 use crate::config::{HealthCheckConfig, HealthStatus, RouteConfig, ServerConfig};
-use crate::core::backend::BackendHealth;
+use crate::core::backend::{BackendHealth, BackendUrl};
 
 pub struct ProxyService {
     config: Arc<ServerConfig>,
@@ -20,7 +20,11 @@ impl ProxyService {
         
         // Initialize health status for all backends
         for backend in &backends {
-            backend_health.insert(backend.clone(), BackendHealth::new(backend.clone()));
+            if let Ok(backend_url) = BackendUrl::new(backend) {
+                backend_health.insert(backend.clone(), BackendHealth::new(backend_url));
+            } else {
+                tracing::error!("Invalid backend URL: {}", backend);
+            }
         }
 
         Self {

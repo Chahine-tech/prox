@@ -9,8 +9,8 @@ use hyper::{Body, Request, StatusCode};
 use crate::config::{LoadBalanceStrategy, RouteConfig};
 use crate::core::{ProxyService, LoadBalancerFactory};
 use crate::ports::file_system::FileSystem;
-use crate::ports::http_client::HttpClient;
-use crate::ports::http_server::HttpHandler;
+use crate::ports::http_client::{HttpClient, HttpClientError};
+use crate::ports::http_server::{HttpHandler, HandlerError};
 
 #[derive(Clone)]
 pub struct HyperHandler {
@@ -96,12 +96,30 @@ impl HyperHandler {
                 *req.uri_mut() = uri;
                 
                 // Forward the request through our HTTP client
-                self.http_client.send_request(req).await
-                    .map(IntoResponse::into_response)
-                    .unwrap_or_else(|err| {
-                        tracing::error!("Proxy error: {:?}", err);
-                        (StatusCode::BAD_GATEWAY, "Bad Gateway").into_response()
-                    })
+                match self.http_client.send_request(req).await {
+                    Ok(response) => response.into_response(),
+                    Err(err) => {
+                        // Map different error types to appropriate status codes
+                        match err {
+                            HttpClientError::ConnectionError(msg) => {
+                                tracing::error!("Connection error: {}", msg);
+                                (StatusCode::BAD_GATEWAY, format!("Cannot connect to backend: {}", msg)).into_response()
+                            },
+                            HttpClientError::TimeoutError(secs) => {
+                                tracing::error!("Request timed out after {} seconds", secs);
+                                (StatusCode::GATEWAY_TIMEOUT, format!("Backend timeout after {} seconds", secs)).into_response()
+                            },
+                            HttpClientError::BackendError { url, status } => {
+                                tracing::error!("Backend {} returned error status: {}", url, status);
+                                (StatusCode::BAD_GATEWAY, format!("Backend error: {}", status)).into_response()
+                            },
+                            _ => {
+                                tracing::error!("Proxy error: {:?}", err);
+                                (StatusCode::BAD_GATEWAY, "Bad Gateway").into_response()
+                            }
+                        }
+                    }
+                }
             }
             Err(err) => {
                 tracing::error!("Failed to parse target URI: {}, error: {}", target_uri, err);
@@ -148,7 +166,7 @@ impl HyperHandler {
 }
 
 impl HttpHandler for HyperHandler {
-    fn handle_request<'a>(&'a self, req: Request<Body>) -> Pin<Box<dyn Future<Output = Result<Response<Body>, anyhow::Error>> + Send + 'a>> {
+    fn handle_request<'a>(&'a self, req: Request<Body>) -> Pin<Box<dyn Future<Output = Result<Response<Body>, HandlerError>> + Send + 'a>> {
         Box::pin(async move {
             let uri = req.uri().clone();
             let path = uri.path();
@@ -183,7 +201,11 @@ impl HttpHandler for HyperHandler {
             // Collect body into bytes and create a simpler stream
             let bytes = match hyper::body::to_bytes(body).await {
                 Ok(bytes) => bytes,
-                Err(err) => return Err(anyhow::anyhow!("Failed to read body: {}", err)),
+                Err(err) => {
+                    return Err(HandlerError::RequestError(
+                        format!("Failed to read body: {}", err)
+                    ));
+                }
             };
             
             // Create a simple one-element stream from the collected bytes

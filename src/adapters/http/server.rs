@@ -11,14 +11,14 @@ use axum::{
     response::{IntoResponse, Response},
     Router,
 };
-use hyper::Body;
+use hyper::{Body, StatusCode};
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
 use crate::adapters::http_handler::HyperHandler;
 use crate::config::ServerConfig;
 use crate::core::ProxyService;
-use crate::ports::http_server::{HttpServer, HttpHandler};
+use crate::ports::http_server::{HttpServer, HttpHandler, HandlerError};
 use crate::ports::{file_system::FileSystem, http_client::HttpClient};
 
 pub struct HyperServer {
@@ -163,8 +163,15 @@ async fn handle_request(
             Ok(Response::from_parts(parts, body))
         },
         Err(e) => {
-            tracing::error!("Error handling request: {}", e);
-            Ok((hyper::StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response())
+            // Map error to appropriate status code
+            let response = match e {
+                HandlerError::RequestError(err) => {
+                    tracing::error!("Request error: {}", err);
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Request error: {}", err)).into_response()
+                }
+            };
+            
+            Ok(response)
         }
     }
 }

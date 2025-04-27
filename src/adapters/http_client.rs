@@ -1,11 +1,11 @@
-use thiserror::Error;
-use hyper::{Body, Request, Response, header};
-use std::future::Future;
-use std::pin::Pin;
-use tokio::time::timeout;
+use hyper::{Body, Request, header};
 use std::time::Duration;
+use tokio::time::timeout;
+use thiserror::Error;
 
-use crate::ports::http_client::{HttpClient, HttpClientError, HttpClientResult};
+use crate::ports::http_client::{
+    HttpClient, HttpClientError, HttpResponseFuture, HealthCheckFuture
+};
 
 /// Custom error type for HTTP client operations
 #[derive(Error, Debug)]
@@ -28,7 +28,12 @@ pub enum HyperClientError {
 
 impl From<HyperClientError> for HttpClientError {
     fn from(err: HyperClientError) -> Self {
-        HttpClientError::AdapterError(err.to_string())
+        match err {
+            HyperClientError::RequestError(e) => HttpClientError::ConnectionError(e.to_string()),
+            HyperClientError::Timeout(secs) => HttpClientError::TimeoutError(secs),
+            HyperClientError::InvalidRequest(e) => HttpClientError::InvalidRequestError(e.to_string()),
+            HyperClientError::FailedRequest { url, status } => HttpClientError::BackendError { url, status },
+        }
     }
 }
 
@@ -92,7 +97,7 @@ impl HyperHttpClient {
 }
 
 impl HttpClient for HyperHttpClient {
-    fn send_request<'a>(&'a self, mut req: Request<Body>) -> Pin<Box<dyn Future<Output = HttpClientResult<Response<Body>>> + Send + 'a>> {
+    fn send_request<'a>(&'a self, mut req: Request<Body>) -> HttpResponseFuture<'a> {
         // Add common headers to make the request more browser-like
         Self::add_common_headers(&mut req);
         
@@ -104,39 +109,43 @@ impl HttpClient for HyperHttpClient {
         Box::pin(async move {
             tracing::info!("Sending request: {} {}", method, uri);
             
-            match client.request(req).await {
-                Ok(response) => {
-                    let status = response.status();
-                    tracing::info!("Received response from {} {}: status={}", method, uri, status);
-                    
-                    if status.is_client_error() || status.is_server_error() {
-                        Err(HyperClientError::FailedRequest { 
-                            url: uri_string, 
-                            status 
-                        }.into())
-                    } else {
-                        Ok(response)
-                    }
-                },
-                Err(err) => {
+            // Use the ? operator for more idiomatic error handling with explicit type conversion
+            let response = client.request(req).await
+                .map_err(|err| {
                     tracing::error!("Error making request to {} {}: {}", method, uri, err);
-                    Err(HyperClientError::RequestError(err).into())
-                }
+                    let hyper_err = HyperClientError::RequestError(err);
+                    HttpClientError::from(hyper_err)
+                })?;
+            
+            let status = response.status();
+            tracing::info!("Received response from {} {}: status={}", method, uri, status);
+            
+            // Check if the response indicates an error
+            if status.is_client_error() || status.is_server_error() {
+                return Err(HttpClientError::from(HyperClientError::FailedRequest { 
+                    url: uri_string, 
+                    status 
+                }));
             }
+            
+            Ok(response)
         })
     }
     
-    fn health_check<'a>(&'a self, url: &'a str, timeout_secs: u64) -> Pin<Box<dyn Future<Output = HttpClientResult<bool>> + Send + 'a>> {
+    fn health_check<'a>(&'a self, url: &'a str, timeout_secs: u64) -> HealthCheckFuture<'a> {
         let client = self.client.clone();
         let url = url.to_string();
         
         Box::pin(async move {
-            // Create request
+            // Create request with ? for early error return and explicit type conversion
             let mut req = Request::builder()
                 .method("GET")
                 .uri(&url)
                 .body(Body::empty())
-                .map_err(HyperClientError::from)?;
+                .map_err(|e| {
+                    let hyper_err = HyperClientError::from(e);
+                    HttpClientError::from(hyper_err)
+                })?;
             
             // Add common headers to make the request more browser-like
             HyperHttpClient::add_common_headers(&mut req);
@@ -145,22 +154,25 @@ impl HttpClient for HyperHttpClient {
             
             // Perform the health check with timeout
             let timeout_duration = Duration::from_secs(timeout_secs);
-            let result = timeout(timeout_duration, client.request(req)).await;
-            
-            match result {
-                Ok(Ok(response)) => {
-                    // Check if status code is in the 2xx range
-                    let is_healthy = response.status().is_success();
-                    tracing::debug!("Health check for {} result: {}", url, is_healthy);
-                    Ok(is_healthy)
+            match timeout(timeout_duration, client.request(req)).await {
+                // Request completed within timeout
+                Ok(result) => match result {
+                    // Request succeeded
+                    Ok(response) => {
+                        let is_healthy = response.status().is_success();
+                        tracing::debug!("Health check for {} result: {}", url, is_healthy);
+                        Ok(is_healthy)
+                    },
+                    // Request failed but we treat as unhealthy not an error
+                    Err(err) => {
+                        tracing::debug!("Health check error for {}: {}", url, err);
+                        Ok(false)
+                    },
                 },
-                Ok(Err(err)) => {
-                    tracing::debug!("Health check error for {}: {}", url, err);
-                    Ok(false)
-                },
+                // Request timed out
                 Err(_) => {
                     tracing::debug!("Health check timeout for {}", url);
-                    Err(HyperClientError::Timeout(timeout_secs).into())
+                    Err(HttpClientError::from(HyperClientError::Timeout(timeout_secs)))
                 }
             }
         })
