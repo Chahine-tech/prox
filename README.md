@@ -23,10 +23,11 @@ Prox follows a hexagonal architecture pattern, which separates the application i
 
 ```
 src/
+├── lib.rs                # Library crate definition and re-exports
 ├── main.rs               # Application entry point 
 ├── config/               # Configuration handling
 │   ├── loader.rs         # Configuration loading logic
-│   ├── models.rs         # Configuration data structures
+│   ├── models.rs         # Configuration data structures with builder pattern
 │   └── mod.rs           
 ├── core/                 # Domain logic
 │   ├── proxy.rs          # Core proxy service logic
@@ -35,7 +36,7 @@ src/
 │   └── mod.rs
 ├── ports/                # Interfaces
 │   ├── http_server.rs    # HTTP server interface
-│   ├── http_client.rs    # HTTP client interface
+│   ├── http_client.rs    # HTTP client interface with type aliases
 │   ├── file_system.rs    # File system interface
 │   └── mod.rs
 └── adapters/             # Implementations of the ports
@@ -55,6 +56,7 @@ src/
 2. **Flexibility**: Components can be replaced without affecting the rest of the system
 3. **Separation of Concerns**: Clean boundaries between different parts of the application
 4. **Domain Focus**: Business logic is isolated from technical details
+
 
 ## Usage
 
