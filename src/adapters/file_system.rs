@@ -1,8 +1,9 @@
-use hyper::{Body, Request, Response};
+use axum::body::Body as AxumBody; // Use Axum's Body type
+use hyper::{Request, Response};
 use std::convert::TryFrom;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
-use futures_util::stream::{self};
+use http_body_util::BodyExt; // Added import
 
 use crate::ports::file_system::{FileSystem, FileSystemError, FileServeFuture};
 
@@ -20,7 +21,7 @@ impl TowerFileSystem {
 }
 
 impl FileSystem for TowerFileSystem {
-    fn serve_file<'a>(&'a self, root: &'a str, path: &'a str, req: Request<Body>) -> FileServeFuture<'a> {
+    fn serve_file<'a>(&'a self, root: &'a str, path: &'a str, req: Request<AxumBody>) -> FileServeFuture<'a> {
         let root = root.to_string();
         let path = path.to_string();
         
@@ -46,8 +47,8 @@ impl FileSystem for TowerFileSystem {
             let (parts, body) = response.into_parts();
             
             // Collect body into bytes and create a simpler stream
-            let bytes = match hyper::body::to_bytes(body).await {
-                Ok(bytes) => bytes,
+            let bytes = match body.collect().await { // Changed to use BodyExt::collect
+                Ok(collected) => collected.to_bytes(), // Convert collected data to bytes
                 Err(err) => {
                     return Err(FileSystemError::IoError(std::io::Error::new(
                         std::io::ErrorKind::Other,
@@ -56,11 +57,8 @@ impl FileSystem for TowerFileSystem {
                 }
             };
             
-            // Create a simple one-element stream from the collected bytes
-            let stream = stream::once(async move { Ok::<_, hyper::Error>(bytes) });
-            
-            // Create a hyper Body
-            let body = Body::wrap_stream(stream);
+            // Create an AxumBody from the collected bytes
+            let body = AxumBody::from(bytes); // Use AxumBody::from
             
             Ok(Response::from_parts(parts, body))
         })

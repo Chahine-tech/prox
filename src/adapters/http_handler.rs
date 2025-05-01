@@ -3,8 +3,10 @@ use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::Result;
-use axum::response::{IntoResponse, Response};
-use hyper::{Body, Request, StatusCode};
+use axum::response::{IntoResponse, Response as AxumResponse};
+use axum::body::Body as AxumBody;
+use hyper::{Request, Response, StatusCode};
+use http_body_util::BodyExt;
 
 use crate::config::{LoadBalanceStrategy, RouteConfig};
 use crate::core::{ProxyService, LoadBalancerFactory};
@@ -31,12 +33,10 @@ impl HyperHandler {
             file_system,
         }
     }
-    
-    async fn handle_static(&self, root: &str, prefix: &str, req: Request<Body>) -> Response {
+
+    async fn handle_static(&self, root: &str, prefix: &str, req: Request<AxumBody>) -> AxumResponse {
         let path = req.uri().path().to_string();
         let rel_path = &path[prefix.len()..];
-
-        // Create a new request to avoid borrowing issues
         let (parts, body) = req.into_parts();
         let new_req = Request::from_parts(parts, body);
 
@@ -48,18 +48,16 @@ impl HyperHandler {
             }
         }
     }
-    
+
     async fn handle_redirect(
         &self,
         target: &str,
         path: &str,
         prefix: &str,
         status_code: Option<u16>,
-    ) -> Response {
+    ) -> AxumResponse {
         let rel_path = &path[prefix.len()..];
         let redirect_url = format!("{}{}", target, rel_path);
-
-        // Try to create a status code from the provided value or default to TEMPORARY_REDIRECT
         let status = status_code
             .and_then(|code| StatusCode::from_u16(code).ok())
             .unwrap_or(StatusCode::TEMPORARY_REDIRECT);
@@ -69,54 +67,42 @@ impl HyperHandler {
         Response::builder()
             .status(status)
             .header("Location", redirect_url)
-            .body(Body::empty())
+            .body(AxumBody::empty())
             .map(IntoResponse::into_response)
             .unwrap_or_else(|err| {
                 tracing::error!("Failed to build redirect response: {}", err);
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
             })
     }
-    
-    async fn handle_proxy(&self, target: &str, mut req: Request<Body>, prefix: &str) -> Response {
+
+    async fn handle_proxy(&self, target: &str, mut req: Request<AxumBody>, prefix: &str) -> AxumResponse {
         let path = req.uri().path();
         let rel_path = &path[prefix.len()..];
-        let query = req
-            .uri()
-            .query()
-            .map(|q| format!("?{}", q))
-            .unwrap_or_default();
-
-        // Construct the new URI
+        let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
         let target_uri = format!("{}{}{}", target, rel_path, query);
-        
-        // Parse and update the request URI
+
         match target_uri.parse::<hyper::Uri>() {
             Ok(uri) => {
                 tracing::debug!("Proxying request to: {}", uri);
                 *req.uri_mut() = uri;
-                
-                // Forward the request through our HTTP client
                 match self.http_client.send_request(req).await {
                     Ok(response) => response.into_response(),
-                    Err(err) => {
-                        // Map different error types to appropriate status codes
-                        match err {
-                            HttpClientError::ConnectionError(msg) => {
-                                tracing::error!("Connection error: {}", msg);
-                                (StatusCode::BAD_GATEWAY, format!("Cannot connect to backend: {}", msg)).into_response()
-                            },
-                            HttpClientError::TimeoutError(secs) => {
-                                tracing::error!("Request timed out after {} seconds", secs);
-                                (StatusCode::GATEWAY_TIMEOUT, format!("Backend timeout after {} seconds", secs)).into_response()
-                            },
-                            HttpClientError::BackendError { url, status } => {
-                                tracing::error!("Backend {} returned error status: {}", url, status);
-                                (StatusCode::BAD_GATEWAY, format!("Backend error: {}", status)).into_response()
-                            },
-                            _ => {
-                                tracing::error!("Proxy error: {:?}", err);
-                                (StatusCode::BAD_GATEWAY, "Bad Gateway").into_response()
-                            }
+                    Err(err) => match err {
+                        HttpClientError::ConnectionError(msg) => {
+                            tracing::error!("Connection error: {}", msg);
+                            (StatusCode::BAD_GATEWAY, format!("Cannot connect to backend: {}", msg)).into_response()
+                        },
+                        HttpClientError::TimeoutError(secs) => {
+                            tracing::error!("Request timed out after {} seconds", secs);
+                            (StatusCode::GATEWAY_TIMEOUT, format!("Backend timeout after {} seconds", secs)).into_response()
+                        },
+                        HttpClientError::BackendError { url, status } => {
+                            tracing::error!("Backend {} returned error status: {}", url, status);
+                            (StatusCode::BAD_GATEWAY, format!("Backend error: {}", status)).into_response()
+                        },
+                        _ => {
+                            tracing::error!("Proxy error: {:?}", err);
+                            (StatusCode::BAD_GATEWAY, "Bad Gateway").into_response()
                         }
                     }
                 }
@@ -127,28 +113,22 @@ impl HyperHandler {
             }
         }
     }
-    
+
     async fn handle_load_balance(
         &self,
         targets: &[String],
         strategy: &LoadBalanceStrategy,
-        req: Request<Body>,
+        req: Request<AxumBody>,
         prefix: &str,
-    ) -> Response {
+    ) -> AxumResponse {
         if targets.is_empty() {
             return (StatusCode::INTERNAL_SERVER_ERROR, "No targets configured").into_response();
         }
-
-        // Filter for healthy backends
         let healthy_targets = self.proxy_service.get_healthy_backends(targets);
-        
-        // If no healthy targets available, return error
         if healthy_targets.is_empty() {
             tracing::warn!("No healthy backends available for route prefix: {}", prefix);
             return (StatusCode::SERVICE_UNAVAILABLE, "No healthy backends available").into_response();
         }
-
-        // Create load balancing strategy and select target
         let lb_strategy = LoadBalancerFactory::create_strategy(strategy);
         let target = match lb_strategy.select_target(&healthy_targets) {
             Some(target) => target,
@@ -157,25 +137,20 @@ impl HyperHandler {
                 return (StatusCode::INTERNAL_SERVER_ERROR, "Load balancer error").into_response();
             }
         };
-
         tracing::debug!("Load balancing to healthy target: {}", target);
-
-        // Forward to the selected target
         self.handle_proxy(&target, req, prefix).await
     }
 }
 
 impl HttpHandler for HyperHandler {
-    fn handle_request<'a>(&'a self, req: Request<Body>) -> Pin<Box<dyn Future<Output = Result<Response<Body>, HandlerError>> + Send + 'a>> {
+    fn handle_request<'a>(&'a self, req: Request<AxumBody>) -> Pin<Box<dyn Future<Output = Result<Response<AxumBody>, HandlerError>> + Send + 'a>> {
         Box::pin(async move {
             let uri = req.uri().clone();
             let path = uri.path();
-
-            // Find matching route using the proxy service
             let matched_route = self.proxy_service.find_matching_route(path);
-            
-            let response = match matched_route {
-                Some((prefix, route_config)) => match route_config {
+
+            let axum_response: AxumResponse = match matched_route {
+                 Some((prefix, route_config)) => match route_config {
                     RouteConfig::Static { root } => {
                         self.handle_static(&root, &prefix, req).await
                     }
@@ -190,30 +165,26 @@ impl HttpHandler for HyperHandler {
                     }
                 },
                 None => {
-                    // No route matched
                     (StatusCode::NOT_FOUND, "Not Found").into_response()
                 }
             };
 
-            // Convert the response to the expected hyper::Response<Body> type
-            let (parts, body) = response.into_parts();
-            
-            // Collect body into bytes and create a simpler stream
-            let bytes = match hyper::body::to_bytes(body).await {
-                Ok(bytes) => bytes,
+            let (parts, axum_body) = axum_response.into_parts();
+
+            let bytes = match axum_body.collect().await {
+                Ok(collected) => collected.to_bytes(),
                 Err(err) => {
-                    return Err(HandlerError::RequestError(
-                        format!("Failed to read body: {}", err)
-                    ));
+                    tracing::error!("Failed to collect response body: {}", err);
+                    let error_response = Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(AxumBody::from("Internal Server Error"))
+                        .unwrap();
+                    return Ok(error_response);
                 }
             };
-            
-            // Create a simple one-element stream from the collected bytes
-            let stream = futures_util::stream::once(async move { Ok::<_, hyper::Error>(bytes) });
-            
-            // Create a hyper Body
-            let body = Body::wrap_stream(stream);
-            
+
+            let body = AxumBody::from(bytes);
+
             Ok(Response::from_parts(parts, body))
         })
     }

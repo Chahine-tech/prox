@@ -1,5 +1,6 @@
 use anyhow::Result;
-use hyper::{Body, Request, Response, StatusCode};
+use axum::body::Body as AxumBody; // Use Axum's Body type
+use hyper::{Request, Response, StatusCode};
 use std::future::Future;
 use std::pin::Pin;
 use thiserror::Error;
@@ -34,7 +35,8 @@ pub enum HttpClientError {
 pub type HttpClientResult<T> = Result<T, HttpClientError>;
 
 /// Type alias for async HTTP request responses
-pub type HttpResponseFuture<'a> = Pin<Box<dyn Future<Output = HttpClientResult<Response<Body>>> + Send + 'a>>;
+// Use AxumBody in Response generic
+pub type HttpResponseFuture<'a> = Pin<Box<dyn Future<Output = HttpClientResult<Response<AxumBody>>> + Send + 'a>>;
 
 /// Type alias for async health check responses
 pub type HealthCheckFuture<'a> = Pin<Box<dyn Future<Output = HttpClientResult<bool>> + Send + 'a>>;
@@ -48,7 +50,8 @@ pub trait HttpClient: Send + Sync + 'static {
     /// 
     /// # Returns
     /// A future that resolves to the backend's response or an error
-    fn send_request<'a>(&'a self, req: Request<Body>) -> HttpResponseFuture<'a>;
+    // Use AxumBody in Request generic
+    fn send_request<'a>(&'a self, req: Request<AxumBody>) -> HttpResponseFuture<'a>;
     
     /// Perform a health check on a backend
     /// 

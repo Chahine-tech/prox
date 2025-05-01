@@ -4,16 +4,26 @@ use std::sync::Arc;
 use std::future::Future;
 use std::pin::Pin;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::{
     extract::Extension,
     http::Request,
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Response as AxumResponse},
     Router,
 };
-use hyper::{Body, StatusCode};
+use axum::body::Body as AxumBody; // Use Axum's Body type
+use hyper::StatusCode;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
+use tokio::net::TcpListener;
+use axum_server::tls_rustls::RustlsConfig;
+// axum_server::Handle removed
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use http_body_util::BodyExt; // Removed unnecessary braces
+// Full removed
+// Bytes removed
+use rustls::crypto::CryptoProvider; // Import CryptoProvider
+
 
 use crate::adapters::http_handler::HyperHandler;
 use crate::config::ServerConfig;
@@ -43,107 +53,71 @@ impl HyperServer {
         }
     }
 
-    async fn build_server(&self) -> Result<axum::Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>>> {
-        // Parse listen address
-        let addr: SocketAddr = self.config.listen_addr.parse()?;
-        
-        // Create the HTTP handler
+    async fn build_app(&self) -> Router {
         let handler = HyperHandler::new(
             self.proxy_service.clone(),
             self.http_client.clone(),
             self.file_system.clone(),
         );
-        
-        // Build our application with a fallback route
-        let app = Router::new().fallback(move |req: Request<Body>| {
+
+        // Update fallback closure to accept Request<AxumBody>
+        Router::new().fallback(move |req: Request<AxumBody>| {
             handle_request(handler.clone(), req)
         }).layer(
             ServiceBuilder::new()
                 .layer(Extension(self.proxy_service.clone()))
                 .layer(TraceLayer::new_for_http()),
-        );
-        
-        // Create the server
-        let server = axum::Server::bind(&addr).serve(app.into_make_service());
-        
-        Ok(server)
+        )
     }
 }
 
 impl HttpServer for HyperServer {
-    fn run<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+     fn run<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            // Check if TLS is configured
-            if let Some(tls_config) = &self.config.tls {
-                // Start HTTPS server
-                tracing::info!("Starting server with TLS");
+            let app = self.build_app().await;
+            let addr: SocketAddr = self.config.listen_addr.parse()
+                .with_context(|| format!("Invalid listen address: {}", self.config.listen_addr))?;
 
-                // Load certificate and private key
+            if let Some(tls_config) = &self.config.tls {
+                tracing::info!("Starting server with TLS on {}", addr);
                 let cert_path = &tls_config.cert_path;
                 let key_path = &tls_config.key_path;
-                
                 use tokio::fs;
-                
-                let cert = fs::read(cert_path).await?;
-                let key = fs::read(key_path).await?;
+                let cert_data = fs::read(cert_path)
+                    .await.with_context(|| format!("Failed to read certificate file: {}", cert_path))?;
+                let key_data = fs::read(key_path)
+                    .await.with_context(|| format!("Failed to read key file: {}", key_path))?;
+                let cert_chain: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_data.as_slice())
+                    .collect::<Result<_, _>>()
+                    .context("Failed to parse certificate PEM")?;
+                let key_der: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_data.as_slice())
+                    .with_context(|| format!("Failed to parse private key file: {}", key_path))?
+                    .ok_or_else(|| anyhow!("No private key found in {}", key_path))?;
 
-                // Parse the certificate and private key
-                let cert_chain = rustls_pemfile::certs(&mut cert.as_slice())?
-                    .into_iter().map(rustls::Certificate).collect();
+                // Configure TLS with a crypto provider
+                CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider()) // Install aws_lc_rs as default
+                    .map_err(|e| anyhow!("Failed to install default crypto provider: {:?}", e))?; // Use debug formatting
 
-                let mut keys = match rustls_pemfile::pkcs8_private_keys(&mut key.as_slice()) {
-                    Ok(keys) => keys,
-                    Err(_) => {
-                        // Try RSA key format if PKCS8 fails
-                        rustls_pemfile::rsa_private_keys(&mut key.as_slice())?
-                    }
-                };
 
-                if keys.is_empty() {
-                    return Err(anyhow!("No private keys found in the key file"));
-                }
-
-                let server_key = rustls::PrivateKey(keys.remove(0));
-
-                // Configure TLS
-                let tls_config = rustls::ServerConfig::builder()
-                    .with_safe_defaults()
+                // Build the config using the installed default provider
+                let server_config = rustls::ServerConfig::builder() // Build without explicit provider
                     .with_no_client_auth()
-                    .with_single_cert(cert_chain, server_key)?;
+                    .with_single_cert(cert_chain, key_der)
+                    .context("Failed to create TLS server config")?;
 
-                // Create server configuration
-                let tls_acceptor = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(tls_config));
+                let tls_acceptor = RustlsConfig::from_config(Arc::new(server_config));
 
-                // Parse listen address
-                let addr: SocketAddr = self.config.listen_addr.parse()?;
-                
-                // Create the HTTP handler
-                let handler = HyperHandler::new(
-                    self.proxy_service.clone(),
-                    self.http_client.clone(),
-                    self.file_system.clone(),
-                );
-                
-                let app = Router::new().fallback(move |req: Request<Body>| {
-                    handle_request(handler.clone(), req)
-                }).layer(
-                    ServiceBuilder::new()
-                        .layer(Extension(self.proxy_service.clone()))
-                        .layer(TraceLayer::new_for_http()),
-                );
-
-                // Start TLS server
-                tracing::info!("Starting secure server on {}", addr);
                 axum_server::bind_rustls(addr, tls_acceptor)
                     .serve(app.into_make_service())
                     .await
-                    .map_err(|e| anyhow!("Server error: {}", e))?;
+                    .map_err(|e| anyhow!("TLS Server error: {}", e))?;
             } else {
-                // Standard HTTP server
-                tracing::info!("Starting server without TLS on {}", self.config.listen_addr);
-                
-                let server = self.build_server().await?;
-                server.await.map_err(|e| anyhow!("Server error: {}", e))?;
+                tracing::info!("Starting server without TLS on {}", addr);
+                let listener = TcpListener::bind(addr).await
+                    .with_context(|| format!("Failed to bind to address: {}", addr))?;
+                axum::serve(listener, app.into_make_service()) // Use axum::serve
+                    .await
+                    .map_err(|e| anyhow!("HTTP Server error: {}", e))?;
             }
 
             Ok(())
@@ -151,26 +125,36 @@ impl HttpServer for HyperServer {
     }
 }
 
+// Update handle_request signature
 async fn handle_request(
     handler: HyperHandler,
-    req: Request<Body>,
-) -> Result<Response, Infallible> {
-    match handler.handle_request(req).await {
+    req: Request<AxumBody>, // Use AxumBody
+) -> Result<AxumResponse, Infallible> { // Return AxumResponse
+    match handler.handle_request(req).await { // handle_request now takes AxumBody
         Ok(response) => {
-            // Convert response to the axum expected type
-            let (parts, body) = response.into_parts();
-            let body = axum::body::boxed(body);
-            Ok(Response::from_parts(parts, body))
+            // Convert hyper::Response<AxumBody> to axum::response::Response
+            let (parts, hyper_body) = response.into_parts();
+
+            // Collect body into bytes
+            let bytes = match hyper_body.collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(err) => {
+                    tracing::error!("Failed to collect response body in handler: {}", err);
+                    return Ok((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response());
+                }
+            };
+
+            // Create an Axum body (which is already the correct type)
+            let axum_body = AxumBody::from(bytes);
+            Ok(AxumResponse::from_parts(parts, axum_body))
         },
         Err(e) => {
-            // Map error to appropriate status code
             let response = match e {
                 HandlerError::RequestError(err) => {
                     tracing::error!("Request error: {}", err);
                     (StatusCode::INTERNAL_SERVER_ERROR, format!("Request error: {}", err)).into_response()
                 }
             };
-            
             Ok(response)
         }
     }

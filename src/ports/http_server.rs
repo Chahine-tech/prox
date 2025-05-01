@@ -1,5 +1,6 @@
 use anyhow::Result;
-use hyper::{Body, Request, Response};
+use axum::body::Body as AxumBody; // Use Axum's Body type
+use hyper::{Request, Response};
 use std::future::Future;
 use std::pin::Pin;
 use thiserror::Error;
@@ -17,7 +18,8 @@ pub enum HandlerError {
 pub type ServerRunFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 
 /// Type alias for HTTP handler response futures
-pub type HandlerResponseFuture<'a> = Pin<Box<dyn Future<Output = Result<Response<Body>, HandlerError>> + Send + 'a>>;
+// Use AxumBody in Response generic
+pub type HandlerResponseFuture<'a> = Pin<Box<dyn Future<Output = Result<Response<AxumBody>, HandlerError>> + Send + 'a>>;
 
 /// HttpServer defines the port (interface) for handling HTTP requests
 pub trait HttpServer: Send + Sync + 'static {
@@ -37,5 +39,6 @@ pub trait HttpHandler: Send + Sync + 'static {
     /// 
     /// # Returns
     /// A future that resolves to an HTTP response or an error
-    fn handle_request<'a>(&'a self, req: Request<Body>) -> HandlerResponseFuture<'a>;
+    // Use AxumBody in Request generic
+    fn handle_request<'a>(&'a self, req: Request<AxumBody>) -> HandlerResponseFuture<'a>;
 }
