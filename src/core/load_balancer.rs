@@ -59,11 +59,8 @@ impl LoadBalancingStrategy for RandomStrategy {
             return None;
         }
         
-        // Use updated rand functions based on warnings, suppress thread_rng warning
-        #[allow(deprecated)] // Suppress potentially incorrect warning for thread_rng
-        let mut rng = rand::thread_rng(); 
-        // Apply the suggested rename from gen_range to random_range
-        let index = rng.random_range(0..targets.len()); // Apply suggested rename
+        // Use rng().random_range directly
+        let index = rand::rng().random_range(0..targets.len());
         Some(targets[index].clone())
     }
 }

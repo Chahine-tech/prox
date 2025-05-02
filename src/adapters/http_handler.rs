@@ -178,7 +178,13 @@ impl HttpHandler for HyperHandler {
                     let error_response = Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .body(AxumBody::from("Internal Server Error"))
-                        .unwrap();
+                        .unwrap_or_else(|_| {
+                            // Fallback in the extremely unlikely case the builder fails
+                            Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(AxumBody::from("Internal Server Error"))
+                                .expect("Building fallback error response failed") // Panic here is acceptable
+                        });
                     return Ok(error_response);
                 }
             };
