@@ -165,13 +165,13 @@ mod tests {
     fn test_backend_url_valid() {
         // Test valid HTTP URL
         let url = "http://example.com";
-        let backend_url = BackendUrl::new(url).unwrap();
+        let backend_url = BackendUrl::new(url).expect("Valid HTTP URL should parse");
         assert_eq!(backend_url.as_str(), url);
         assert_eq!(backend_url.is_secure(), false);
         
         // Test valid HTTPS URL
         let secure_url = "https://secure.example.com";
-        let secure_backend_url = BackendUrl::new(secure_url).unwrap();
+        let secure_backend_url = BackendUrl::new(secure_url).expect("Valid HTTPS URL should parse");
         assert_eq!(secure_backend_url.as_str(), secure_url);
         assert_eq!(secure_backend_url.is_secure(), true);
     }
@@ -191,7 +191,7 @@ mod tests {
     fn test_backend_url_from_str() {
         // Test FromStr implementation
         let url = "http://example.com";
-        let backend_url: BackendUrl = url.parse().unwrap();
+        let backend_url: BackendUrl = url.parse().expect("Parsing valid URL string should succeed");
         assert_eq!(backend_url.as_str(), url);
     }
     
@@ -199,13 +199,13 @@ mod tests {
     fn test_backend_url_display() {
         // Test Display implementation
         let url = "http://example.com";
-        let backend_url = BackendUrl::new(url).unwrap();
+        let backend_url = BackendUrl::new(url).expect("Creating BackendUrl from valid string should succeed");
         assert_eq!(backend_url.to_string(), url);
     }
     
     #[test]
     fn test_backend_health_transitions() {
-        let url = BackendUrl::new("http://example.com").unwrap();
+        let url = BackendUrl::new("http://example.com").expect("Creating BackendUrl for health test should succeed");
         let health = BackendHealth::new(url);
         
         // Initial state
