@@ -1,8 +1,6 @@
 use anyhow::Result;
 use axum::body::Body as AxumBody; // Use Axum's Body type
 use hyper::{Request, Response, StatusCode};
-use std::future::Future;
-use std::pin::Pin;
 use thiserror::Error;
 
 /// Custom error type for HTTP client operations
@@ -34,13 +32,6 @@ pub enum HttpClientError {
 /// Result type alias for HTTP client operations
 pub type HttpClientResult<T> = Result<T, HttpClientError>;
 
-/// Type alias for async HTTP request responses
-// Use AxumBody in Response generic
-pub type HttpResponseFuture<'a> = Pin<Box<dyn Future<Output = HttpClientResult<Response<AxumBody>>> + Send + 'a>>;
-
-/// Type alias for async health check responses
-pub type HealthCheckFuture<'a> = Pin<Box<dyn Future<Output = HttpClientResult<bool>> + Send + 'a>>;
-
 /// HttpClient defines the port (interface) for making HTTP requests to backends
 pub trait HttpClient: Send + Sync + 'static {
     /// Send an HTTP request to a backend server
@@ -50,8 +41,7 @@ pub trait HttpClient: Send + Sync + 'static {
     /// 
     /// # Returns
     /// A future that resolves to the backend's response or an error
-    // Use AxumBody in Request generic
-    fn send_request<'a>(&'a self, req: Request<AxumBody>) -> HttpResponseFuture<'a>;
+    fn send_request(&self, req: Request<AxumBody>) -> impl std::future::Future<Output = HttpClientResult<Response<AxumBody>>> + Send;
     
     /// Perform a health check on a backend
     /// 
@@ -61,5 +51,5 @@ pub trait HttpClient: Send + Sync + 'static {
     /// 
     /// # Returns
     /// A future that resolves to true if the backend is healthy, false otherwise
-    fn health_check<'a>(&'a self, url: &'a str, timeout_secs: u64) -> HealthCheckFuture<'a>;
+    fn health_check(&self, url: &str, timeout_secs: u64) -> impl std::future::Future<Output = HttpClientResult<bool>> + Send;
 }

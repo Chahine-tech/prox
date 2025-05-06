@@ -1,6 +1,4 @@
 use std::sync::Arc;
-use std::future::Future;
-use std::pin::Pin;
 
 use anyhow::Result;
 use axum::response::{IntoResponse, Response as AxumResponse};
@@ -10,22 +8,24 @@ use http_body_util::BodyExt;
 
 use crate::config::{LoadBalanceStrategy, RouteConfig};
 use crate::core::{ProxyService, LoadBalancerFactory};
-use crate::ports::file_system::FileSystem;
-use crate::ports::http_client::{HttpClient, HttpClientError};
+use crate::ports::file_system::FileSystem; // Import the FileSystem trait
+use crate::ports::http_client::{HttpClient, HttpClientError}; // Import the HttpClient trait
 use crate::ports::http_server::{HttpHandler, HandlerError};
+use crate::adapters::http_client::HyperHttpClient; // Import concrete type
+use crate::adapters::file_system::TowerFileSystem;   // Import concrete type
 
 #[derive(Clone)]
 pub struct HyperHandler {
     proxy_service: Arc<ProxyService>,
-    http_client: Arc<dyn HttpClient>,
-    file_system: Arc<dyn FileSystem>,
+    http_client: Arc<HyperHttpClient>, // Use concrete type
+    file_system: Arc<TowerFileSystem>,   // Use concrete type
 }
 
 impl HyperHandler {
     pub fn new(
         proxy_service: Arc<ProxyService>,
-        http_client: Arc<dyn HttpClient>,
-        file_system: Arc<dyn FileSystem>,
+        http_client: Arc<HyperHttpClient>, // Use concrete type
+        file_system: Arc<TowerFileSystem>,   // Use concrete type
     ) -> Self {
         Self {
             proxy_service,
@@ -143,55 +143,43 @@ impl HyperHandler {
 }
 
 impl HttpHandler for HyperHandler {
-    fn handle_request<'a>(&'a self, req: Request<AxumBody>) -> Pin<Box<dyn Future<Output = Result<Response<AxumBody>, HandlerError>> + Send + 'a>> {
-        Box::pin(async move {
-            let uri = req.uri().clone();
-            let path = uri.path();
-            let matched_route = self.proxy_service.find_matching_route(path);
+    async fn handle_request(&self, req: Request<AxumBody>) -> Result<Response<AxumBody>, HandlerError> {
+        let uri = req.uri().clone();
+        let path = uri.path();
+        let matched_route = self.proxy_service.find_matching_route(path);
 
-            let axum_response: AxumResponse = match matched_route {
-                 Some((prefix, route_config)) => match route_config {
-                    RouteConfig::Static { root } => {
-                        self.handle_static(&root, &prefix, req).await
-                    }
-                    RouteConfig::Redirect { target, status_code } => {
-                        self.handle_redirect(&target, path, &prefix, status_code).await
-                    }
-                    RouteConfig::Proxy { target } => {
-                        self.handle_proxy(&target, req, &prefix).await
-                    }
-                    RouteConfig::LoadBalance { targets, strategy } => {
-                        self.handle_load_balance(&targets, &strategy, req, &prefix).await
-                    }
-                },
-                None => {
-                    (StatusCode::NOT_FOUND, "Not Found").into_response()
+        let axum_response: AxumResponse = match matched_route {
+             Some((prefix, route_config)) => match route_config {
+                RouteConfig::Static { root } => {
+                    self.handle_static(&root, &prefix, req).await
                 }
-            };
-
-            let (parts, axum_body) = axum_response.into_parts();
-
-            let bytes = match axum_body.collect().await {
-                Ok(collected) => collected.to_bytes(),
-                Err(err) => {
-                    tracing::error!("Failed to collect response body: {}", err);
-                    let error_response = Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(AxumBody::from("Internal Server Error"))
-                        .unwrap_or_else(|_| {
-                            // Fallback in the extremely unlikely case the builder fails
-                            Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(AxumBody::from("Internal Server Error"))
-                                .expect("Building fallback error response failed") // Panic here is acceptable
-                        });
-                    return Ok(error_response);
+                RouteConfig::Redirect { target, status_code } => {
+                    self.handle_redirect(&target, path, &prefix, status_code).await
                 }
-            };
+                RouteConfig::Proxy { target } => {
+                    self.handle_proxy(&target, req, &prefix).await
+                }
+                RouteConfig::LoadBalance { targets, strategy } => {
+                    self.handle_load_balance(&targets, &strategy, req, &prefix).await
+                }
+            },
+            None => {
+                (StatusCode::NOT_FOUND, "Not Found").into_response()
+            }
+        };
 
-            let body = AxumBody::from(bytes);
+        let (parts, axum_body) = axum_response.into_parts();
 
-            Ok(Response::from_parts(parts, body))
-        })
+        let bytes = match axum_body.collect().await {
+            Ok(collected) => collected.to_bytes(),
+            Err(err) => {
+                tracing::error!("Failed to collect response body: {}", err);
+                return Err(HandlerError::RequestError(format!("Failed to collect response body: {}", err)));
+            }
+        };
+
+        let body = AxumBody::from(bytes);
+
+        Ok(Response::from_parts(parts, body))
     }
 }

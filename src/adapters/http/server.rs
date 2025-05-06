@@ -1,8 +1,6 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::future::Future;
-use std::pin::Pin;
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
@@ -17,11 +15,8 @@ use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tokio::net::TcpListener;
 use axum_server::tls_rustls::RustlsConfig;
-// axum_server::Handle removed
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use http_body_util::BodyExt; // Removed unnecessary braces
-// Full removed
-// Bytes removed
 use rustls::crypto::CryptoProvider; // Import CryptoProvider
 
 
@@ -29,21 +24,24 @@ use crate::adapters::http_handler::HyperHandler;
 use crate::config::ServerConfig;
 use crate::core::ProxyService;
 use crate::ports::http_server::{HttpServer, HttpHandler, HandlerError};
-use crate::ports::{file_system::FileSystem, http_client::HttpClient};
+// Remove direct imports of HttpClient and FileSystem traits if only concrete types are used.
+// use crate::ports::{file_system::FileSystem, http_client::HttpClient};
+use crate::adapters::http_client::HyperHttpClient; // Import concrete type
+use crate::adapters::file_system::TowerFileSystem; // Import concrete type
 
 pub struct HyperServer {
     proxy_service: Arc<ProxyService>,
     config: Arc<ServerConfig>,
-    http_client: Arc<dyn HttpClient>,
-    file_system: Arc<dyn FileSystem>,
+    http_client: Arc<HyperHttpClient>, // Use concrete type
+    file_system: Arc<TowerFileSystem>, // Use concrete type
 }
 
 impl HyperServer {
     pub fn with_dependencies(
         proxy_service: Arc<ProxyService>,
         config: Arc<ServerConfig>,
-        http_client: Arc<dyn HttpClient>,
-        file_system: Arc<dyn FileSystem>,
+        http_client: Arc<HyperHttpClient>, // Use concrete type
+        file_system: Arc<TowerFileSystem>, // Use concrete type
     ) -> Self {
         Self {
             proxy_service,
@@ -72,56 +70,56 @@ impl HyperServer {
 }
 
 impl HttpServer for HyperServer {
-     fn run<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            let app = self.build_app().await;
-            let addr: SocketAddr = self.config.listen_addr.parse()
-                .with_context(|| format!("Invalid listen address: {}", self.config.listen_addr))?;
+    // Changed signature to use async fn and removed Pin<Box<...>>
+    async fn run(&self) -> Result<()> {
+        // Removed Box::pin wrapper
+        let app = self.build_app().await;
+        let addr: SocketAddr = self.config.listen_addr.parse()
+            .with_context(|| format!("Invalid listen address: {}", self.config.listen_addr))?;
 
-            if let Some(tls_config) = &self.config.tls {
-                tracing::info!("Starting server with TLS on {}", addr);
-                let cert_path = &tls_config.cert_path;
-                let key_path = &tls_config.key_path;
-                use tokio::fs;
-                let cert_data = fs::read(cert_path)
-                    .await.with_context(|| format!("Failed to read certificate file: {}", cert_path))?;
-                let key_data = fs::read(key_path)
-                    .await.with_context(|| format!("Failed to read key file: {}", key_path))?;
-                let cert_chain: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_data.as_slice())
-                    .collect::<Result<_, _>>()
-                    .context("Failed to parse certificate PEM")?;
-                let key_der: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_data.as_slice())
-                    .with_context(|| format!("Failed to parse private key file: {}", key_path))?
-                    .ok_or_else(|| anyhow!("No private key found in {}", key_path))?;
+        if let Some(tls_config) = &self.config.tls {
+            tracing::info!("Starting server with TLS on {}", addr);
+            let cert_path = &tls_config.cert_path;
+            let key_path = &tls_config.key_path;
+            use tokio::fs;
+            let cert_data = fs::read(cert_path)
+                .await.with_context(|| format!("Failed to read certificate file: {}", cert_path))?;
+            let key_data = fs::read(key_path)
+                .await.with_context(|| format!("Failed to read key file: {}", key_path))?;
+            let cert_chain: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_data.as_slice())
+                .collect::<Result<_, _>>()
+                .context("Failed to parse certificate PEM")?;
+            let key_der: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_data.as_slice())
+                .with_context(|| format!("Failed to parse private key file: {}", key_path))?
+                .ok_or_else(|| anyhow!("No private key found in {}", key_path))?;
 
-                // Configure TLS with a crypto provider
-                CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider()) // Install aws_lc_rs as default
-                    .map_err(|e| anyhow!("Failed to install default crypto provider: {:?}", e))?; // Use debug formatting
+            // Configure TLS with a crypto provider
+            CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider()) // Install aws_lc_rs as default
+                .map_err(|e| anyhow!("Failed to install default crypto provider: {:?}", e))?; // Use debug formatting
 
 
-                // Build the config using the installed default provider
-                let server_config = rustls::ServerConfig::builder() // Build without explicit provider
-                    .with_no_client_auth()
-                    .with_single_cert(cert_chain, key_der)
-                    .context("Failed to create TLS server config")?;
+            // Build the config using the installed default provider
+            let server_config = rustls::ServerConfig::builder() // Build without explicit provider
+                .with_no_client_auth()
+                .with_single_cert(cert_chain, key_der)
+                .context("Failed to create TLS server config")?;
 
-                let tls_acceptor = RustlsConfig::from_config(Arc::new(server_config));
+            let tls_acceptor = RustlsConfig::from_config(Arc::new(server_config));
 
-                axum_server::bind_rustls(addr, tls_acceptor)
-                    .serve(app.into_make_service())
-                    .await
-                    .map_err(|e| anyhow!("TLS Server error: {}", e))?;
-            } else {
-                tracing::info!("Starting server without TLS on {}", addr);
-                let listener = TcpListener::bind(addr).await
-                    .with_context(|| format!("Failed to bind to address: {}", addr))?;
-                axum::serve(listener, app.into_make_service()) // Use axum::serve
-                    .await
-                    .map_err(|e| anyhow!("HTTP Server error: {}", e))?;
-            }
+            axum_server::bind_rustls(addr, tls_acceptor)
+                .serve(app.into_make_service())
+                .await
+                .map_err(|e| anyhow!("TLS Server error: {}", e))?;
+        } else {
+            tracing::info!("Starting server without TLS on {}", addr);
+            let listener = TcpListener::bind(addr).await
+                .with_context(|| format!("Failed to bind to address: {}", addr))?;
+            axum::serve(listener, app.into_make_service()) // Use axum::serve
+                .await
+                .map_err(|e| anyhow!("HTTP Server error: {}", e))?;
+        }
 
-            Ok(())
-        })
+        Ok(())
     }
 }
 

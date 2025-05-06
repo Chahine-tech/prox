@@ -7,17 +7,18 @@ use tokio::time::sleep;
 use crate::config::{HealthCheckConfig, HealthStatus};
 use crate::core::ProxyService;
 use crate::core::backend::BackendHealth;
-use crate::ports::http_client::HttpClient;
+use crate::adapters::http_client::HyperHttpClient; // Import concrete type
+use crate::ports::http_client::HttpClient; // Import the HttpClient trait for method calls
 
 pub struct HealthChecker {
     proxy_service: Arc<ProxyService>,
-    http_client: Arc<dyn HttpClient>,
+    http_client: Arc<HyperHttpClient>, // Use concrete type
 }
 
 impl HealthChecker {
     pub fn new(
         proxy_service: Arc<ProxyService>,
-        http_client: Arc<dyn HttpClient>,
+        http_client: Arc<HyperHttpClient>, // Use concrete type
     ) -> Self {
         Self {
             proxy_service,
@@ -28,7 +29,7 @@ impl HealthChecker {
     pub async fn run(&self) -> Result<()> {
         let health_config = self.proxy_service.health_config();
         
-        if !health_config.enabled {
+        if !health_config.enabled { // Removed parentheses
             tracing::info!("Health checking is disabled");
             return Ok(());
         }

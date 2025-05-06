@@ -1,8 +1,6 @@
 use anyhow::Result;
 use axum::body::Body as AxumBody; // Use Axum's Body type
 use hyper::{Request, Response};
-use std::future::Future;
-use std::pin::Pin;
 use thiserror::Error;
 
 /// Error type for file system operations
@@ -21,21 +19,16 @@ pub enum FileSystemError {
 /// Result type for file system operations
 pub type FileSystemResult<T> = Result<T, FileSystemError>;
 
-/// Type alias for async file serving responses
-// Use AxumBody in Response generic
-pub type FileServeFuture<'a> = Pin<Box<dyn Future<Output = FileSystemResult<Response<AxumBody>>> + Send + 'a>>;
-
 /// FileSystem defines the port (interface) for handling static files
 pub trait FileSystem: Send + Sync + 'static {
-    /// Serve a static file from the filesystem
+    /// Serve a file from the file system
     /// 
     /// # Arguments
-    /// * `root` - The root directory from which to serve files
-    /// * `path` - The relative path to the requested file
+    /// * `root` - The root directory to serve files from
+    /// * `path` - The path to the file relative to the root
     /// * `req` - The original HTTP request
     /// 
     /// # Returns
     /// A future that resolves to the file response or an error
-    // Use AxumBody in Request generic
-    fn serve_file<'a>(&'a self, root: &'a str, path: &'a str, req: Request<AxumBody>) -> FileServeFuture<'a>;
+    fn serve_file(&self, root: &str, path: &str, req: Request<AxumBody>) -> impl std::future::Future<Output = FileSystemResult<Response<AxumBody>>> + Send;
 }

@@ -9,7 +9,7 @@ use thiserror::Error;
 use http_body_util::BodyExt; // Added for map_frame
 
 use crate::ports::http_client::{
-    HttpClient, HttpClientError, HttpResponseFuture, HealthCheckFuture
+    HttpClient, HttpClientError, HttpClientResult // Removed HttpResponseFuture, HealthCheckFuture and added HttpClientResult
 };
 
 /// Custom error type for HTTP client operations
@@ -93,8 +93,8 @@ impl HyperHttpClient {
 }
 
 impl HttpClient for HyperHttpClient {
-    // Update function signature to use AxumBody
-    fn send_request<'a>(&'a self, mut req: Request<AxumBody>) -> HttpResponseFuture<'a> {
+    // Update function signature to use async fn and remove Pin<Box<...>>
+    async fn send_request(&self, mut req: Request<AxumBody>) -> HttpClientResult<Response<AxumBody>> {
         Self::add_common_headers(&mut req);
 
         let client = self.client.clone();
@@ -102,77 +102,74 @@ impl HttpClient for HyperHttpClient {
         let uri = req.uri().clone();
         let uri_string = uri.to_string();
 
-        Box::pin(async move {
-            tracing::info!("Sending request: {} {}", method, uri);
-            
-            // Make the request - response body is hyper::body::Incoming
-            let response: Response<HyperBodyIncoming> = client.request(req).await
-                .map_err(|err| {
-                    tracing::error!("Error making request to {} {}: {}", method, uri, err);
-                    // Convert hyper_util error to string for HyperClientError::RequestError
-                    let hyper_err = HyperClientError::RequestError(err.to_string()); 
-                    HttpClientError::from(hyper_err)
-                })?;
+        // Removed Box::pin wrapper
+        tracing::info!("Sending request: {} {}", method, uri);
+        
+        // Make the request - response body is hyper::body::Incoming
+        let response: Response<HyperBodyIncoming> = client.request(req).await
+            .map_err(|err| {
+                tracing::error!("Error making request to {} {}: {}", method, uri, err);
+                // Convert hyper_util error to string for HyperClientError::RequestError
+                let hyper_err = HyperClientError::RequestError(err.to_string()); 
+                HttpClientError::from(hyper_err)
+            })?;
 
-            let status = response.status();
-            tracing::info!("Received response from {} {}: status={}", method, uri, status);
-            if status.is_client_error() || status.is_server_error() {
-                return Err(HttpClientError::from(HyperClientError::FailedRequest {
-                    url: uri_string,
-                    status
-                }));
-            }
+        let status = response.status();
+        if status.is_client_error() || status.is_server_error() {
+            tracing::warn!("Backend {} returned error status: {}", uri_string, status);
+            return Err(HttpClientError::BackendError { url: uri_string, status });
+        }
 
-            // Map the response body from hyper::body::Incoming to AxumBody
-            let response = response.map(|body| {
-                AxumBody::new(body.map_err(|e| {
-                    // This error handling might need refinement depending on how you want to surface body read errors
-                    tracing::error!("Error reading response body: {}", e);
-                    axum::Error::new(e) // Convert hyper error to axum::Error
-                }))
-            });
+        // Convert hyper::body::Incoming to AxumBody
+        let (parts, hyper_body) = response.into_parts();
+        let axum_body = AxumBody::new(hyper_body.map_err(|e| {
+            tracing::error!("Error reading response body: {}", e);
+            // Convert hyper::Error to a type compatible with AxumBody's error
+            axum::Error::new(e)
+        }));
 
-            Ok(response) // response is now Response<AxumBody>
-        })
+        Ok(Response::from_parts(parts, axum_body))
     }
 
-    fn health_check<'a>(&'a self, url: &'a str, timeout_secs: u64) -> HealthCheckFuture<'a> {
+    // Update function signature to use async fn and remove Pin<Box<...>>
+    async fn health_check(&self, url: &str, timeout_secs: u64) -> HttpClientResult<bool> {
         let client = self.client.clone();
         let url = url.to_string();
 
-        Box::pin(async move {
-            // Create request with an empty AxumBody
-            let mut req = Request::builder()
-                .method("GET")
-                .uri(&url)
-                .body(AxumBody::empty()) // Use AxumBody::empty()
-                .map_err(|e| {
-                    let hyper_err = HyperClientError::from(e);
-                    HttpClientError::from(hyper_err)
-                })?;
+        // Removed Box::pin wrapper
+        // Create request with an empty AxumBody
+        let mut req = Request::builder()
+            .method("GET")
+            .uri(&url)
+            .body(AxumBody::empty()) // Use AxumBody::empty()
+            .map_err(|e| {
+                let hyper_err = HyperClientError::from(e);
+                HttpClientError::from(hyper_err)
+            })?;
 
-            HyperHttpClient::add_common_headers(&mut req);
-            tracing::debug!("Health checking URL: {}", url);
-            let timeout_duration = Duration::from_secs(timeout_secs);
-             match timeout(timeout_duration, client.request(req)).await { // request takes Request<AxumBody>
-                Ok(result) => match result {
-                    Ok(response) => {
-                        let is_healthy = response.status().is_success();
-                        tracing::debug!("Health check for {} result: {}", url, is_healthy);
-                        Ok(is_healthy)
-                    },
-                    Err(err) => {
-                        // Convert hyper_util error to string before creating HttpClientError
-                        tracing::debug!("Health check error for {}: {}", url, err);
-                        // Directly return Ok(false) as per original logic for connection errors during health check
-                        Ok(false) 
-                    },
+        HyperHttpClient::add_common_headers(&mut req);
+        tracing::debug!("Health checking URL: {}", url);
+        let timeout_duration = Duration::from_secs(timeout_secs);
+         match timeout(timeout_duration, client.request(req)).await { // request takes Request<AxumBody>
+            Ok(result) => match result {
+                Ok(response) => {
+                    let is_healthy = response.status().is_success();
+                    // Consume the body to prevent resource leaks
+                    let _ = response.into_body().collect().await;
+                    tracing::debug!("Health check for {} result: {}", url, is_healthy);
+                    Ok(is_healthy)
                 },
-                Err(_) => {
-                    tracing::debug!("Health check timeout for {}", url);
-                    Err(HttpClientError::from(HyperClientError::Timeout(timeout_secs)))
-                }
-             }
-        })
+                Err(err) => {
+                    // Convert hyper_util error to string before creating HttpClientError
+                    tracing::debug!("Health check error for {}: {}", url, err);
+                    // Directly return Ok(false) as per original logic for connection errors during health check
+                    Ok(false) 
+                },
+            },
+            Err(_) => {
+                tracing::debug!("Health check timeout for {}", url);
+                Err(HttpClientError::from(HyperClientError::Timeout(timeout_secs)))
+            }
+         }
     }
 }

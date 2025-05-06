@@ -9,7 +9,9 @@ use tokio;
 use prox::{
     HyperServer, HealthChecker, TowerFileSystem, HyperHttpClient, ProxyService,
     config::loader::load_config,
-    ports::{file_system::FileSystem, http_client::HttpClient, http_server::HttpServer}
+    // Remove direct imports of traits if concrete types are used for instantiation
+    // ports::{file_system::FileSystem, http_client::HttpClient, http_server::HttpServer}
+    ports::http_server::HttpServer // HttpServer trait is still needed for server.run()
 };
 
 #[derive(Parser, Debug)]
@@ -35,9 +37,9 @@ async fn main() -> Result<()> {
     // Create shared configuration
     let config = Arc::new(config);
     
-    // Create adapters
-    let http_client: Arc<dyn HttpClient> = Arc::new(HyperHttpClient::new());
-    let file_system: Arc<dyn FileSystem> = Arc::new(TowerFileSystem::new());
+    // Create adapters with concrete types
+    let http_client: Arc<HyperHttpClient> = Arc::new(HyperHttpClient::new());
+    let file_system: Arc<TowerFileSystem> = Arc::new(TowerFileSystem::new());
     
     // Create the proxy service
     let proxy_service = ProxyService::new(config.clone());
