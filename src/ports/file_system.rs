@@ -10,7 +10,7 @@ pub enum FileSystemError {
     /// Error when encountering an IO issue
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-    
+
     /// Error when path is invalid
     #[error("Invalid path: {0}")]
     InvalidPath(String),
@@ -22,13 +22,18 @@ pub type FileSystemResult<T> = Result<T, FileSystemError>;
 /// FileSystem defines the port (interface) for handling static files
 pub trait FileSystem: Send + Sync + 'static {
     /// Serve a file from the file system
-    /// 
+    ///
     /// # Arguments
     /// * `root` - The root directory to serve files from
     /// * `path` - The path to the file relative to the root
     /// * `req` - The original HTTP request
-    /// 
+    ///
     /// # Returns
     /// A future that resolves to the file response or an error
-    fn serve_file(&self, root: &str, path: &str, req: Request<AxumBody>) -> impl std::future::Future<Output = FileSystemResult<Response<AxumBody>>> + Send;
+    fn serve_file(
+        &self,
+        root: &str,
+        path: &str,
+        req: Request<AxumBody>,
+    ) -> impl std::future::Future<Output = FileSystemResult<Response<AxumBody>>> + Send;
 }

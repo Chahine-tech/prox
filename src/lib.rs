@@ -15,8 +15,8 @@ pub(crate) mod adapters;
 pub(crate) mod core;
 
 // Re-export the specific types needed by the binary crate
-pub use crate::adapters::http::server::HyperServer;
-pub use crate::adapters::health_checker::HealthChecker;
 pub use crate::adapters::file_system::TowerFileSystem;
+pub use crate::adapters::health_checker::HealthChecker;
+pub use crate::adapters::http::server::HyperServer;
 pub use crate::adapters::http_client::HyperHttpClient;
 pub use crate::core::ProxyService;

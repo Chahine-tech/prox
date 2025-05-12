@@ -1,9 +1,9 @@
 use axum::body::Body as AxumBody; // Use Axum's Body type
+use http_body_util::BodyExt;
 use hyper::{Request, Response};
 use std::convert::TryFrom;
 use tower::ServiceExt;
-use tower_http::services::ServeDir;
-use http_body_util::BodyExt; // Added import
+use tower_http::services::ServeDir; // Added import
 
 use crate::ports::file_system::{FileSystem, FileSystemError, FileSystemResult}; // Removed FileServeFuture and added FileSystemResult
 
@@ -22,10 +22,15 @@ impl TowerFileSystem {
 
 impl FileSystem for TowerFileSystem {
     // Update function signature to use async fn and remove Pin<Box<...>>
-    async fn serve_file(&self, root: &str, path: &str, req: Request<AxumBody>) -> FileSystemResult<Response<AxumBody>> {
+    async fn serve_file(
+        &self,
+        root: &str,
+        path: &str,
+        req: Request<AxumBody>,
+    ) -> FileSystemResult<Response<AxumBody>> {
         let root = root.to_string();
         let path = path.to_string();
-        
+
         // Removed Box::pin wrapper
         // Create a new request with the path adjusted for ServeDir
         let uri_string = format!("/{}", path.trim_start_matches('/'));
@@ -38,18 +43,19 @@ impl FileSystem for TowerFileSystem {
 
         // Use ServeDir from tower-http
         let serve_dir = ServeDir::new(&root);
-        let response = serve_dir.oneshot(new_req).await
-            .map_err(|e| FileSystemError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other, 
-                format!("ServeDir error: {}", e)
-            )))?;
+        let response = serve_dir.oneshot(new_req).await.map_err(|e| {
+            FileSystemError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("ServeDir error: {}", e),
+            ))
+        })?;
 
         // Convert tower_http::Response<ServeFileSystemResponseBody> to hyper::Response<AxumBody>
         let (parts, tower_body) = response.into_parts();
         let axum_body = AxumBody::new(tower_body.map_err(|e| {
             tracing::error!("Error reading static file body: {}", e);
             // Convert Infallible to a type compatible with AxumBody's error
-            axum::Error::new(e) 
+            axum::Error::new(e)
         }));
 
         Ok(Response::from_parts(parts, axum_body))
@@ -59,7 +65,7 @@ impl FileSystem for TowerFileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_default_construction() {
         let _fs1 = TowerFileSystem::new();

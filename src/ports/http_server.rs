@@ -15,7 +15,7 @@ pub enum HandlerError {
 /// HttpServer defines the port (interface) for handling HTTP requests
 pub trait HttpServer: Send + Sync + 'static {
     /// Run the HTTP server
-    /// 
+    ///
     /// # Returns
     /// A future that resolves when the server shuts down or encounters an error
     fn run(&self) -> impl std::future::Future<Output = Result<()>> + Send;
@@ -24,11 +24,14 @@ pub trait HttpServer: Send + Sync + 'static {
 /// HttpHandler defines the port for handling HTTP requests
 pub trait HttpHandler: Send + Sync + 'static {
     /// Handle an incoming HTTP request
-    /// 
+    ///
     /// # Arguments
     /// * `req` - The HTTP request to handle
-    /// 
+    ///
     /// # Returns
     /// A future that resolves to an HTTP response or an error
-    fn handle_request(&self, req: Request<AxumBody>) -> impl std::future::Future<Output = Result<Response<AxumBody>, HandlerError>> + Send;
+    fn handle_request(
+        &self,
+        req: Request<AxumBody>,
+    ) -> impl std::future::Future<Output = Result<Response<AxumBody>, HandlerError>> + Send;
 }

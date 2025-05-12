@@ -9,7 +9,7 @@ use crate::config::models::ServerConfig;
 pub enum ConfigError {
     #[error("Failed to read config file: {0}")]
     IoError(#[from] std::io::Error),
-    
+
     #[error("Failed to parse YAML config: {0}")]
     ParseError(#[from] serde_yaml::Error),
 }

@@ -1,11 +1,11 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use rand::Rng;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Trait defining the interface for load balancing strategies
 pub trait LoadBalancingStrategy: Send + Sync + 'static {
     /// Select a target from a list of targets
     fn select_target(&self, targets: &[String]) -> Option<String>;
-    
+
     /// Create a new instance of this strategy as a boxed trait object
     fn boxed(self) -> Box<dyn LoadBalancingStrategy>
     where
@@ -34,10 +34,10 @@ impl LoadBalancingStrategy for RoundRobinStrategy {
         if targets.is_empty() {
             return None;
         }
-        
+
         // Atomically increment and get the counter value
         let count = self.counter.fetch_add(1, Ordering::SeqCst);
-        
+
         // Calculate index with remainder to cycle through targets
         Some(targets[count % targets.len()].clone())
     }
@@ -58,7 +58,7 @@ impl LoadBalancingStrategy for RandomStrategy {
         if targets.is_empty() {
             return None;
         }
-        
+
         // Use rng().random_range directly
         let index = rand::rng().random_range(0..targets.len());
         Some(targets[index].clone())
@@ -70,7 +70,9 @@ pub struct LoadBalancerFactory;
 
 impl LoadBalancerFactory {
     /// Create a new load balancing strategy based on configuration
-    pub fn create_strategy(strategy: &crate::config::LoadBalanceStrategy) -> Box<dyn LoadBalancingStrategy> {
+    pub fn create_strategy(
+        strategy: &crate::config::LoadBalanceStrategy,
+    ) -> Box<dyn LoadBalancingStrategy> {
         match strategy {
             crate::config::LoadBalanceStrategy::RoundRobin => RoundRobinStrategy::new().boxed(),
             crate::config::LoadBalanceStrategy::Random => RandomStrategy::new().boxed(),
