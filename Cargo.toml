@@ -3,6 +3,9 @@ name = "prox"
 version = "0.1.0"
 edition = "2021"
 
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(test)'] }
+
 [dependencies]
 axum = { version = "0.8", features = ["http1", "http2"] } 
 hyper = { version = "1.6", features = ["full"] } 

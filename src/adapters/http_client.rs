@@ -1,15 +1,17 @@
 use axum::body::Body as AxumBody; // Use Axum's Body type
-use hyper::{Request, header, Response}; // Added Response
+use http_body_util::BodyExt;
 use hyper::body::Incoming as HyperBodyIncoming; // Added for clarity
+use hyper::{header, Request, Response}; // Added Response
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use std::time::Duration;
-use tokio::time::timeout;
 use thiserror::Error;
-use http_body_util::BodyExt; // Added for map_frame
+use tokio::time::timeout; // Added for map_frame
 
 use crate::ports::http_client::{
-    HttpClient, HttpClientError, HttpClientResult // Removed HttpResponseFuture, HealthCheckFuture and added HttpClientResult
+    HttpClient,
+    HttpClientError,
+    HttpClientResult, // Removed HttpResponseFuture, HealthCheckFuture and added HttpClientResult
 };
 
 /// Custom error type for HTTP client operations
@@ -17,18 +19,18 @@ use crate::ports::http_client::{
 pub enum HyperClientError {
     #[error("HTTP request error: {0}")]
     RequestError(String), // Changed from hyper::Error to String to accommodate hyper_util error
-    
+
     #[error("Request timeout after {0} seconds")]
     Timeout(u64),
-    
+
     #[error("Invalid request: {0}")]
     InvalidRequest(#[from] hyper::http::Error),
-    
+
     #[error("Request to {url} failed with status: {status}")]
     FailedRequest {
         url: String,
         status: hyper::StatusCode,
-    }
+    },
 }
 
 impl From<HyperClientError> for HttpClientError {
@@ -36,15 +38,22 @@ impl From<HyperClientError> for HttpClientError {
         match err {
             HyperClientError::RequestError(e) => HttpClientError::ConnectionError(e.to_string()),
             HyperClientError::Timeout(secs) => HttpClientError::TimeoutError(secs),
-            HyperClientError::InvalidRequest(e) => HttpClientError::InvalidRequestError(e.to_string()),
-            HyperClientError::FailedRequest { url, status } => HttpClientError::BackendError { url, status },
+            HyperClientError::InvalidRequest(e) => {
+                HttpClientError::InvalidRequestError(e.to_string())
+            }
+            HyperClientError::FailedRequest { url, status } => {
+                HttpClientError::BackendError { url, status }
+            }
         }
     }
 }
 
 pub struct HyperHttpClient {
     // Use AxumBody as the concrete body type for the client
-    client: Client<hyper_tls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>, AxumBody>
+    client: Client<
+        hyper_tls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+        AxumBody,
+    >,
 }
 
 impl HyperHttpClient {
@@ -64,7 +73,7 @@ impl HyperHttpClient {
 
     // Update function signature to use AxumBody
     fn add_common_headers(req: &mut Request<AxumBody>) {
-       let headers = req.headers_mut();
+        let headers = req.headers_mut();
         if !headers.contains_key(header::USER_AGENT) {
             headers.insert(
                 header::USER_AGENT,
@@ -74,19 +83,21 @@ impl HyperHttpClient {
         if !headers.contains_key(header::ACCEPT) {
             headers.insert(
                 header::ACCEPT,
-                header::HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+                header::HeaderValue::from_static(
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                ),
             );
         }
         if !headers.contains_key(header::ACCEPT_LANGUAGE) {
             headers.insert(
                 header::ACCEPT_LANGUAGE,
-                header::HeaderValue::from_static("en-US,en;q=0.5")
+                header::HeaderValue::from_static("en-US,en;q=0.5"),
             );
         }
         if !headers.contains_key(header::CACHE_CONTROL) {
             headers.insert(
                 header::CACHE_CONTROL,
-                header::HeaderValue::from_static("max-age=0")
+                header::HeaderValue::from_static("max-age=0"),
             );
         }
     }
@@ -94,7 +105,10 @@ impl HyperHttpClient {
 
 impl HttpClient for HyperHttpClient {
     // Update function signature to use async fn and remove Pin<Box<...>>
-    async fn send_request(&self, mut req: Request<AxumBody>) -> HttpClientResult<Response<AxumBody>> {
+    async fn send_request(
+        &self,
+        mut req: Request<AxumBody>,
+    ) -> HttpClientResult<Response<AxumBody>> {
         Self::add_common_headers(&mut req);
 
         let client = self.client.clone();
@@ -104,20 +118,22 @@ impl HttpClient for HyperHttpClient {
 
         // Removed Box::pin wrapper
         tracing::info!("Sending request: {} {}", method, uri);
-        
+
         // Make the request - response body is hyper::body::Incoming
-        let response: Response<HyperBodyIncoming> = client.request(req).await
-            .map_err(|err| {
-                tracing::error!("Error making request to {} {}: {}", method, uri, err);
-                // Convert hyper_util error to string for HyperClientError::RequestError
-                let hyper_err = HyperClientError::RequestError(err.to_string()); 
-                HttpClientError::from(hyper_err)
-            })?;
+        let response: Response<HyperBodyIncoming> = client.request(req).await.map_err(|err| {
+            tracing::error!("Error making request to {} {}: {}", method, uri, err);
+            // Convert hyper_util error to string for HyperClientError::RequestError
+            let hyper_err = HyperClientError::RequestError(err.to_string());
+            HttpClientError::from(hyper_err)
+        })?;
 
         let status = response.status();
         if status.is_client_error() || status.is_server_error() {
             tracing::warn!("Backend {} returned error status: {}", uri_string, status);
-            return Err(HttpClientError::BackendError { url: uri_string, status });
+            return Err(HttpClientError::BackendError {
+                url: uri_string,
+                status,
+            });
         }
 
         // Convert hyper::body::Incoming to AxumBody
@@ -150,7 +166,8 @@ impl HttpClient for HyperHttpClient {
         HyperHttpClient::add_common_headers(&mut req);
         tracing::debug!("Health checking URL: {}", url);
         let timeout_duration = Duration::from_secs(timeout_secs);
-         match timeout(timeout_duration, client.request(req)).await { // request takes Request<AxumBody>
+        match timeout(timeout_duration, client.request(req)).await {
+            // request takes Request<AxumBody>
             Ok(result) => match result {
                 Ok(response) => {
                     let is_healthy = response.status().is_success();
@@ -158,18 +175,26 @@ impl HttpClient for HyperHttpClient {
                     let _ = response.into_body().collect().await;
                     tracing::debug!("Health check for {} result: {}", url, is_healthy);
                     Ok(is_healthy)
-                },
+                }
                 Err(err) => {
                     // Convert hyper_util error to string before creating HttpClientError
                     tracing::debug!("Health check error for {}: {}", url, err);
                     // Directly return Ok(false) as per original logic for connection errors during health check
-                    Ok(false) 
-                },
+                    Ok(false)
+                }
             },
             Err(_) => {
                 tracing::debug!("Health check timeout for {}", url);
-                Err(HttpClientError::from(HyperClientError::Timeout(timeout_secs)))
+                Err(HttpClientError::from(HyperClientError::Timeout(
+                    timeout_secs,
+                )))
             }
-         }
+        }
+    }
+}
+
+impl Default for HyperHttpClient {
+    fn default() -> Self {
+        Self::new()
     }
 }

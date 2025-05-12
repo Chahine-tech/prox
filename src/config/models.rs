@@ -59,19 +59,26 @@ impl ServerConfigBuilder {
     }
 
     /// Add a backend-specific health check path
-    pub fn backend_health_path(mut self, backend: impl Into<String>, path: impl Into<String>) -> Self {
-        self.backend_health_paths.insert(backend.into(), path.into());
+    pub fn backend_health_path(
+        mut self,
+        backend: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Self {
+        self.backend_health_paths
+            .insert(backend.into(), path.into());
         self
     }
 
     /// Build the final ServerConfig
     pub fn build(self) -> Result<ServerConfig, String> {
-        let listen_addr = self.listen_addr.ok_or_else(|| "listen_addr is required".to_string())?;
-        
+        let listen_addr = self
+            .listen_addr
+            .ok_or_else(|| "listen_addr is required".to_string())?;
+
         if self.routes.is_empty() {
             return Err("At least one route must be configured".to_string());
         }
-        
+
         Ok(ServerConfig {
             listen_addr,
             routes: self.routes,
@@ -136,25 +143,27 @@ impl RouteConfig {
     pub fn static_files(root: impl Into<String>) -> Self {
         RouteConfig::Static { root: root.into() }
     }
-    
+
     /// Create a redirect route
     pub fn redirect(target: impl Into<String>, status_code: Option<u16>) -> Self {
-        RouteConfig::Redirect { 
+        RouteConfig::Redirect {
             target: target.into(),
             status_code,
         }
     }
-    
+
     /// Create a proxy route to a single backend
     pub fn proxy(target: impl Into<String>) -> Self {
-        RouteConfig::Proxy { target: target.into() }
+        RouteConfig::Proxy {
+            target: target.into(),
+        }
     }
-    
+
     /// Create a load balanced route with multiple backends
     pub fn load_balance(targets: Vec<String>, strategy: LoadBalanceStrategy) -> Self {
         RouteConfig::LoadBalance { targets, strategy }
     }
-    
+
     /// Create a load balanced route builder
     pub fn load_balancer() -> LoadBalancerBuilder {
         LoadBalancerBuilder::default()
@@ -174,7 +183,7 @@ impl LoadBalancerBuilder {
         self.targets.push(target.into());
         self
     }
-    
+
     /// Add multiple target backends
     pub fn targets(mut self, targets: impl IntoIterator<Item = impl Into<String>>) -> Self {
         for target in targets {
@@ -182,27 +191,27 @@ impl LoadBalancerBuilder {
         }
         self
     }
-    
+
     /// Set the load balancing strategy to round robin
     pub fn round_robin(mut self) -> Self {
         self.strategy = Some(LoadBalanceStrategy::RoundRobin);
         self
     }
-    
+
     /// Set the load balancing strategy to random
     pub fn random(mut self) -> Self {
         self.strategy = Some(LoadBalanceStrategy::Random);
         self
     }
-    
+
     /// Build the load balanced route
     pub fn build(self) -> Result<RouteConfig, String> {
         if self.targets.is_empty() {
             return Err("At least one target must be specified for load balancing".to_string());
         }
-        
+
         let strategy = self.strategy.unwrap_or(LoadBalanceStrategy::RoundRobin);
-        
+
         Ok(RouteConfig::LoadBalance {
             targets: self.targets,
             strategy,

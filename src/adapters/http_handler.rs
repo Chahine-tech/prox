@@ -1,31 +1,31 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::response::{IntoResponse, Response as AxumResponse};
 use axum::body::Body as AxumBody;
-use hyper::{Request, Response, StatusCode};
+use axum::response::{IntoResponse, Response as AxumResponse};
 use http_body_util::BodyExt;
+use hyper::{Request, Response, StatusCode};
 
+use crate::adapters::file_system::TowerFileSystem;
+use crate::adapters::http_client::HyperHttpClient; // Import concrete type
 use crate::config::{LoadBalanceStrategy, RouteConfig};
-use crate::core::{ProxyService, LoadBalancerFactory};
+use crate::core::{LoadBalancerFactory, ProxyService};
 use crate::ports::file_system::FileSystem; // Import the FileSystem trait
 use crate::ports::http_client::{HttpClient, HttpClientError}; // Import the HttpClient trait
-use crate::ports::http_server::{HttpHandler, HandlerError};
-use crate::adapters::http_client::HyperHttpClient; // Import concrete type
-use crate::adapters::file_system::TowerFileSystem;   // Import concrete type
+use crate::ports::http_server::{HandlerError, HttpHandler}; // Import concrete type
 
 #[derive(Clone)]
 pub struct HyperHandler {
     proxy_service: Arc<ProxyService>,
     http_client: Arc<HyperHttpClient>, // Use concrete type
-    file_system: Arc<TowerFileSystem>,   // Use concrete type
+    file_system: Arc<TowerFileSystem>, // Use concrete type
 }
 
 impl HyperHandler {
     pub fn new(
         proxy_service: Arc<ProxyService>,
         http_client: Arc<HyperHttpClient>, // Use concrete type
-        file_system: Arc<TowerFileSystem>,   // Use concrete type
+        file_system: Arc<TowerFileSystem>, // Use concrete type
     ) -> Self {
         Self {
             proxy_service,
@@ -34,7 +34,12 @@ impl HyperHandler {
         }
     }
 
-    async fn handle_static(&self, root: &str, prefix: &str, req: Request<AxumBody>) -> AxumResponse {
+    async fn handle_static(
+        &self,
+        root: &str,
+        prefix: &str,
+        req: Request<AxumBody>,
+    ) -> AxumResponse {
         let path = req.uri().path().to_string();
         let rel_path = &path[prefix.len()..];
         let (parts, body) = req.into_parts();
@@ -75,10 +80,19 @@ impl HyperHandler {
             })
     }
 
-    async fn handle_proxy(&self, target: &str, mut req: Request<AxumBody>, prefix: &str) -> AxumResponse {
+    async fn handle_proxy(
+        &self,
+        target: &str,
+        mut req: Request<AxumBody>,
+        prefix: &str,
+    ) -> AxumResponse {
         let path = req.uri().path();
         let rel_path = &path[prefix.len()..];
-        let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
+        let query = req
+            .uri()
+            .query()
+            .map(|q| format!("?{}", q))
+            .unwrap_or_default();
         let target_uri = format!("{}{}{}", target, rel_path, query);
 
         match target_uri.parse::<hyper::Uri>() {
@@ -90,21 +104,33 @@ impl HyperHandler {
                     Err(err) => match err {
                         HttpClientError::ConnectionError(msg) => {
                             tracing::error!("Connection error: {}", msg);
-                            (StatusCode::BAD_GATEWAY, format!("Cannot connect to backend: {}", msg)).into_response()
-                        },
+                            (
+                                StatusCode::BAD_GATEWAY,
+                                format!("Cannot connect to backend: {}", msg),
+                            )
+                                .into_response()
+                        }
                         HttpClientError::TimeoutError(secs) => {
                             tracing::error!("Request timed out after {} seconds", secs);
-                            (StatusCode::GATEWAY_TIMEOUT, format!("Backend timeout after {} seconds", secs)).into_response()
-                        },
+                            (
+                                StatusCode::GATEWAY_TIMEOUT,
+                                format!("Backend timeout after {} seconds", secs),
+                            )
+                                .into_response()
+                        }
                         HttpClientError::BackendError { url, status } => {
                             tracing::error!("Backend {} returned error status: {}", url, status);
-                            (StatusCode::BAD_GATEWAY, format!("Backend error: {}", status)).into_response()
-                        },
+                            (
+                                StatusCode::BAD_GATEWAY,
+                                format!("Backend error: {}", status),
+                            )
+                                .into_response()
+                        }
                         _ => {
                             tracing::error!("Proxy error: {:?}", err);
                             (StatusCode::BAD_GATEWAY, "Bad Gateway").into_response()
                         }
-                    }
+                    },
                 }
             }
             Err(err) => {
@@ -127,7 +153,11 @@ impl HyperHandler {
         let healthy_targets = self.proxy_service.get_healthy_backends(targets);
         if healthy_targets.is_empty() {
             tracing::warn!("No healthy backends available for route prefix: {}", prefix);
-            return (StatusCode::SERVICE_UNAVAILABLE, "No healthy backends available").into_response();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "No healthy backends available",
+            )
+                .into_response();
         }
         let lb_strategy = LoadBalancerFactory::create_strategy(strategy);
         let target = match lb_strategy.select_target(&healthy_targets) {
@@ -143,29 +173,31 @@ impl HyperHandler {
 }
 
 impl HttpHandler for HyperHandler {
-    async fn handle_request(&self, req: Request<AxumBody>) -> Result<Response<AxumBody>, HandlerError> {
+    async fn handle_request(
+        &self,
+        req: Request<AxumBody>,
+    ) -> Result<Response<AxumBody>, HandlerError> {
         let uri = req.uri().clone();
         let path = uri.path();
         let matched_route = self.proxy_service.find_matching_route(path);
 
         let axum_response: AxumResponse = match matched_route {
-             Some((prefix, route_config)) => match route_config {
-                RouteConfig::Static { root } => {
-                    self.handle_static(&root, &prefix, req).await
+            Some((prefix, route_config)) => match route_config {
+                RouteConfig::Static { root } => self.handle_static(&root, &prefix, req).await,
+                RouteConfig::Redirect {
+                    target,
+                    status_code,
+                } => {
+                    self.handle_redirect(&target, path, &prefix, status_code)
+                        .await
                 }
-                RouteConfig::Redirect { target, status_code } => {
-                    self.handle_redirect(&target, path, &prefix, status_code).await
-                }
-                RouteConfig::Proxy { target } => {
-                    self.handle_proxy(&target, req, &prefix).await
-                }
+                RouteConfig::Proxy { target } => self.handle_proxy(&target, req, &prefix).await,
                 RouteConfig::LoadBalance { targets, strategy } => {
-                    self.handle_load_balance(&targets, &strategy, req, &prefix).await
+                    self.handle_load_balance(&targets, &strategy, req, &prefix)
+                        .await
                 }
             },
-            None => {
-                (StatusCode::NOT_FOUND, "Not Found").into_response()
-            }
+            None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
         };
 
         let (parts, axum_body) = axum_response.into_parts();
@@ -174,7 +206,10 @@ impl HttpHandler for HyperHandler {
             Ok(collected) => collected.to_bytes(),
             Err(err) => {
                 tracing::error!("Failed to collect response body: {}", err);
-                return Err(HandlerError::RequestError(format!("Failed to collect response body: {}", err)));
+                return Err(HandlerError::RequestError(format!(
+                    "Failed to collect response body: {}",
+                    err
+                )));
             }
         };
 
