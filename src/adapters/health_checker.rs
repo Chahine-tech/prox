@@ -76,7 +76,7 @@ impl HealthChecker {
                                          target, successes);
                             
                             // If we've reached the threshold, mark as healthy
-                            if successes >= health_config.healthy_threshold as u32
+                            if successes >= health_config.healthy_threshold
                                 && backend_health.status() == HealthStatus::Unhealthy {
                                     
                                 tracing::info!("Backend {} is now HEALTHY (after {} consecutive successes)", 
@@ -119,7 +119,7 @@ impl HealthChecker {
                       target, reason, failures, health_config.unhealthy_threshold);
         
         // Mark as unhealthy if threshold reached and current status is healthy
-        if failures >= health_config.unhealthy_threshold as u32
+        if failures >= health_config.unhealthy_threshold
             && backend_health.status() == HealthStatus::Healthy {
             
             tracing::warn!("Backend {} is now UNHEALTHY (after {} consecutive failures): {}", 

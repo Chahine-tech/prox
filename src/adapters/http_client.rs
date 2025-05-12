@@ -173,3 +173,9 @@ impl HttpClient for HyperHttpClient {
          }
     }
 }
+
+impl Default for HyperHttpClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -1,12 +1,11 @@
 /// Prox - A configurable HTTP reverse proxy
-/// 
+///
 /// This crate provides a reverse proxy server with features like:
 /// - Static file serving
 /// - HTTP/HTTPS support
 /// - Load balancing
 /// - Health checking
 /// - Path-based routing
-
 // Re-export public modules with explicit visibility controls
 pub mod config;
 pub mod ports;

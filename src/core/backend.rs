@@ -167,13 +167,13 @@ mod tests {
         let url = "http://example.com";
         let backend_url = BackendUrl::new(url).expect("Valid HTTP URL should parse");
         assert_eq!(backend_url.as_str(), url);
-        assert_eq!(backend_url.is_secure(), false);
+        assert!(!backend_url.is_secure());
         
         // Test valid HTTPS URL
         let secure_url = "https://secure.example.com";
         let secure_backend_url = BackendUrl::new(secure_url).expect("Valid HTTPS URL should parse");
         assert_eq!(secure_backend_url.as_str(), secure_url);
-        assert_eq!(secure_backend_url.is_secure(), true);
+        assert!(secure_backend_url.is_secure());
     }
     
     #[test]

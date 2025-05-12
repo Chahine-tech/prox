@@ -16,7 +16,7 @@ impl TowerFileSystem {
     ///
     /// This is equivalent to calling `Default::default()` since TowerFileSystem has no state.
     pub fn new() -> Self {
-        Self::default()
+        Self {}
     }
 }
 
@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn test_default_construction() {
         let _fs1 = TowerFileSystem::new();
-        let _fs2 = TowerFileSystem::default();
+        let _fs2 = TowerFileSystem {};
         // Both instantiation methods are valid and equivalent
     }
 }

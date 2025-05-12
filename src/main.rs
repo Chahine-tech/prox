@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 use anyhow::{Result, Context};
 use clap::Parser;
-use tracing_subscriber;
-use tokio;
 
 // Import directly from crate root where they are re-exported
 use prox::{
