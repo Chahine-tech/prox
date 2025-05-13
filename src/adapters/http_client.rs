@@ -130,8 +130,10 @@ impl HttpClient for HyperHttpClient {
                 }
                 Err(e) => {
                     tracing::error!("Invalid host string for Host header '{}': {}", host_val, e);
-                    // Optionally, return an error here if this is critical
-                    // return Err(HttpClientError::InvalidRequestError(format!("Invalid host for Host header: {}", e)));
+                    return Err(HttpClientError::InvalidRequestError(format!(
+                        "Invalid host string for Host header '{}': {}",
+                        host_val, e
+                    )));
                 }
             }
         } else {
