@@ -36,11 +36,7 @@ impl HyperHandler {
     }
 
     // Helper function to compute the final path after considering rewrite rules
-    fn compute_final_path(
-        original_path: &str,
-        prefix: &str,
-        path_rewrite: Option<&str>,
-    ) -> String {
+    fn compute_final_path(original_path: &str, prefix: &str, path_rewrite: Option<&str>) -> String {
         if let Some(rewrite_template) = path_rewrite {
             let stripped_path = original_path.strip_prefix(prefix).unwrap_or(original_path);
             // If rewrite_template is "/", use the stripped_path as-is, effectively removing the original prefix
