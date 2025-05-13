@@ -38,7 +38,17 @@ impl HyperHandler {
     // Helper function to compute the final path after considering rewrite rules
     fn compute_final_path(original_path: &str, prefix: &str, path_rewrite: Option<&str>) -> String {
         if let Some(rewrite_template) = path_rewrite {
-            let stripped_path = original_path.strip_prefix(prefix).unwrap_or(original_path);
+            let stripped_path = if let Some(stripped) = original_path.strip_prefix(prefix) {
+                stripped
+            } else {
+                // Log a warning or handle the case where the prefix is not found
+                eprintln!(
+                    "Warning: The original path '{}' does not start with the expected prefix '{}'.",
+                    original_path, prefix
+                );
+                // Fallback to an empty path or handle as per application logic
+                return String::new(); // Or handle appropriately
+            };
             // If rewrite_template is "/", use the stripped_path as-is, effectively removing the original prefix
             // and not adding any new prefix from the rewrite_template itself.
             // For example, if original_path is "/api/v1/users", prefix is "/api/v1", and rewrite_template is "/",
