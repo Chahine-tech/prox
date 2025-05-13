@@ -135,7 +135,10 @@ impl HttpClient for HyperHttpClient {
                 }
             }
         } else {
-            tracing::warn!("Request URI {} has no host, cannot set Host header explicitly", uri);
+            tracing::warn!(
+                "Request URI {} has no host, cannot set Host header explicitly",
+                uri
+            );
             // Optionally, return an error or rely on Hyper's default behavior
         }
 

@@ -89,18 +89,28 @@ impl HyperHandler {
         path_rewrite: Option<&str>,
     ) -> AxumResponse {
         let original_path = req.uri().path();
-        let query = req.uri().query().map_or("".to_string(), |q| format!("?{}", q));
+        let query = req
+            .uri()
+            .query()
+            .map_or("".to_string(), |q| format!("?{}", q));
 
         let final_path = if let Some(rewrite_template) = path_rewrite {
             let stripped_path = original_path.strip_prefix(prefix).unwrap_or(original_path);
             if rewrite_template == "/" {
                 stripped_path.to_string()
             } else {
-                format!("{}{}", rewrite_template.trim_end_matches('/'), stripped_path)
+                format!(
+                    "{}{}",
+                    rewrite_template.trim_end_matches('/'),
+                    stripped_path
+                )
             }
         } else {
             // If no path_rewrite, the path relative to the prefix is appended to the target.
-            original_path.strip_prefix(prefix).unwrap_or(original_path).to_string()
+            original_path
+                .strip_prefix(prefix)
+                .unwrap_or(original_path)
+                .to_string()
         };
 
         let target_uri_string = format!("{}{}{}", target.trim_end_matches('/'), final_path, query);
@@ -128,7 +138,11 @@ impl HyperHandler {
                 }
             }
             Err(err) => {
-                tracing::error!("Failed to parse target URI: {}, error: {}", target_uri_string, err);
+                tracing::error!(
+                    "Failed to parse target URI: {}, error: {}",
+                    target_uri_string,
+                    err
+                );
                 Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body(AxumBody::from("Failed to parse target URI"))
@@ -173,20 +187,35 @@ impl HyperHandler {
         };
 
         let original_path = req.uri().path();
-        let query = req.uri().query().map_or("".to_string(), |q| format!("?{}", q));
+        let query = req
+            .uri()
+            .query()
+            .map_or("".to_string(), |q| format!("?{}", q));
 
         let final_path = if let Some(rewrite_template) = path_rewrite {
             let stripped_path = original_path.strip_prefix(prefix).unwrap_or(original_path);
             if rewrite_template == "/" {
                 stripped_path.to_string()
             } else {
-                format!("{}{}", rewrite_template.trim_end_matches('/'), stripped_path)
+                format!(
+                    "{}{}",
+                    rewrite_template.trim_end_matches('/'),
+                    stripped_path
+                )
             }
         } else {
-            original_path.strip_prefix(prefix).unwrap_or(original_path).to_string()
+            original_path
+                .strip_prefix(prefix)
+                .unwrap_or(original_path)
+                .to_string()
         };
 
-        let target_uri_string = format!("{}{}{}", selected_target.trim_end_matches('/'), final_path, query);
+        let target_uri_string = format!(
+            "{}{}{}",
+            selected_target.trim_end_matches('/'),
+            final_path,
+            query
+        );
 
         match target_uri_string.parse::<hyper::Uri>() {
             Ok(uri) => {
@@ -205,13 +234,20 @@ impl HyperHandler {
                         };
                         Response::builder()
                             .status(status_code)
-                            .body(AxumBody::from(format!("Load balanced request failed: {}", e)))
+                            .body(AxumBody::from(format!(
+                                "Load balanced request failed: {}",
+                                e
+                            )))
                             .unwrap()
                     }
                 }
             }
             Err(err) => {
-                tracing::error!("Failed to parse load balanced target URI: {}, error: {}", target_uri_string, err);
+                tracing::error!(
+                    "Failed to parse load balanced target URI: {}, error: {}",
+                    target_uri_string,
+                    err
+                );
                 Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body(AxumBody::from("Failed to parse load balanced target URI"))
@@ -240,12 +276,26 @@ impl HttpHandler for HyperHandler {
                     self.handle_redirect(&target, path, &prefix, status_code)
                         .await
                 }
-                RouteConfig::Proxy { target, path_rewrite } => {
-                    self.handle_proxy(&target, req, &prefix, path_rewrite.as_deref()).await
-                }
-                RouteConfig::LoadBalance { targets, strategy, path_rewrite } => {
-                    self.handle_load_balance(&targets, &strategy, req, &prefix, path_rewrite.as_deref())
+                RouteConfig::Proxy {
+                    target,
+                    path_rewrite,
+                } => {
+                    self.handle_proxy(&target, req, &prefix, path_rewrite.as_deref())
                         .await
+                }
+                RouteConfig::LoadBalance {
+                    targets,
+                    strategy,
+                    path_rewrite,
+                } => {
+                    self.handle_load_balance(
+                        &targets,
+                        &strategy,
+                        req,
+                        &prefix,
+                        path_rewrite.as_deref(),
+                    )
+                    .await
                 }
             },
             None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
