@@ -5,15 +5,15 @@ use clap::Parser;
 
 // Import directly from crate root where they are re-exported
 use prox::{
-    config::loader::load_config,
-    // Remove direct imports of traits if concrete types are used for instantiation
-    // ports::{file_system::FileSystem, http_client::HttpClient, http_server::HttpServer}
-    ports::http_server::HttpServer, // HttpServer trait is still needed for server.run()
     HealthChecker,
     HyperHttpClient,
     HyperServer,
     ProxyService,
     TowerFileSystem,
+    config::loader::load_config,
+    // Remove direct imports of traits if concrete types are used for instantiation
+    // ports::{file_system::FileSystem, http_client::HttpClient, http_server::HttpServer}
+    ports::http_server::HttpServer, // HttpServer trait is still needed for server.run()
 };
 
 #[derive(Parser, Debug)]
