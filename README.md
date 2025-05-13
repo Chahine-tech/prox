@@ -8,6 +8,7 @@ Prox is a lightweight reverse proxy built in Rust, implementing a hexagonal arch
 - Static file serving
 - HTTP redirects
 - Load balancing (round-robin and random strategies)
+- Path Rewriting for proxy and load-balanced routes
 - Health checking for backend services
 - Configurable via YAML
 - Custom error handling with type safety
@@ -108,12 +109,18 @@ routes:
   "/proxy":
     type: "proxy"
     target: "https://httpbin.org"
+    path_rewrite: "/anything" # Example: /proxy/foo rewrites to /anything/foo
+  "/api/v1": # Example for API versioning
+    type: "proxy"
+    target: "http://internal-service"
+    path_rewrite: "/" # Example: /api/v1/users rewrites to /users
   "/balance":
     type: "load_balance"
     targets:
       - "https://httpbin.org"
       - "https://postman-echo.com" 
     strategy: "round_robin"
+    path_rewrite: "/newpath" # Example: /balance/bar rewrites to /newpath/bar
 ```
 
 ## Testing
@@ -129,6 +136,10 @@ curl -k -L https://127.0.0.1:3002/
 
 # Test proxy
 curl -k https://127.0.0.1:3002/proxy/get
+
+# Test proxy with path rewriting
+curl -k https://127.0.0.1:3002/proxy/test/path # Assuming /proxy has path_rewrite: "/anything"
+# Expected: httpbin.org receives a request for /anything/test/path
 
 # Test load balancing (run multiple times to see round-robin in action)
 curl -k https://127.0.0.1:3002/balance/get
