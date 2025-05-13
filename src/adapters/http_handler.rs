@@ -35,6 +35,36 @@ impl HyperHandler {
         }
     }
 
+    // Helper function to compute the final path after considering rewrite rules
+    fn compute_final_path(
+        original_path: &str,
+        prefix: &str,
+        path_rewrite: Option<&str>,
+    ) -> String {
+        if let Some(rewrite_template) = path_rewrite {
+            let stripped_path = original_path.strip_prefix(prefix).unwrap_or(original_path);
+            // If rewrite_template is "/", use the stripped_path as-is, effectively removing the original prefix
+            // and not adding any new prefix from the rewrite_template itself.
+            // For example, if original_path is "/api/v1/users", prefix is "/api/v1", and rewrite_template is "/",
+            // then stripped_path is "/users", and final_path becomes "/users".
+            if rewrite_template == "/" {
+                stripped_path.to_string()
+            } else {
+                format!(
+                    "{}{}",
+                    rewrite_template.trim_end_matches('/'),
+                    stripped_path
+                )
+            }
+        } else {
+            // If no path_rewrite, the path relative to the prefix is used.
+            original_path
+                .strip_prefix(prefix)
+                .unwrap_or(original_path)
+                .to_string()
+        }
+    }
+
     async fn handle_static(
         &self,
         root: &str,
@@ -88,30 +118,13 @@ impl HyperHandler {
         prefix: &str,
         path_rewrite: Option<&str>,
     ) -> AxumResponse {
-        let original_path = req.uri().path();
+        let original_path = req.uri().path().to_string(); // Keep as String for lifetime reasons if needed by helper
         let query = req
             .uri()
             .query()
             .map_or("".to_string(), |q| format!("?{}", q));
 
-        let final_path = if let Some(rewrite_template) = path_rewrite {
-            let stripped_path = original_path.strip_prefix(prefix).unwrap_or(original_path);
-            if rewrite_template == "/" {
-                stripped_path.to_string()
-            } else {
-                format!(
-                    "{}{}",
-                    rewrite_template.trim_end_matches('/'),
-                    stripped_path
-                )
-            }
-        } else {
-            // If no path_rewrite, the path relative to the prefix is appended to the target.
-            original_path
-                .strip_prefix(prefix)
-                .unwrap_or(original_path)
-                .to_string()
-        };
+        let final_path = Self::compute_final_path(&original_path, prefix, path_rewrite);
 
         let target_uri_string = format!("{}{}{}", target.trim_end_matches('/'), final_path, query);
 
@@ -186,29 +199,13 @@ impl HyperHandler {
             }
         };
 
-        let original_path = req.uri().path();
+        let original_path = req.uri().path().to_string(); // Keep as String for lifetime reasons if needed by helper
         let query = req
             .uri()
             .query()
             .map_or("".to_string(), |q| format!("?{}", q));
 
-        let final_path = if let Some(rewrite_template) = path_rewrite {
-            let stripped_path = original_path.strip_prefix(prefix).unwrap_or(original_path);
-            if rewrite_template == "/" {
-                stripped_path.to_string()
-            } else {
-                format!(
-                    "{}{}",
-                    rewrite_template.trim_end_matches('/'),
-                    stripped_path
-                )
-            }
-        } else {
-            original_path
-                .strip_prefix(prefix)
-                .unwrap_or(original_path)
-                .to_string()
-        };
+        let final_path = Self::compute_final_path(&original_path, prefix, path_rewrite);
 
         let target_uri_string = format!(
             "{}{}{}",
