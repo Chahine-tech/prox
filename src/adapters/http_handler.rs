@@ -42,9 +42,10 @@ impl HyperHandler {
                 stripped
             } else {
                 // Log a warning or handle the case where the prefix is not found
-                eprintln!(
-                    "Warning: The original path '{}' does not start with the expected prefix '{}'.",
-                    original_path, prefix
+                tracing::warn!(
+                    original_path = %original_path, // Using % for Display trait
+                    prefix = %prefix,
+                    "Original path does not start with the expected prefix during path rewrite. This might indicate an internal logic issue."
                 );
                 // Fallback to an empty path or handle as per application logic
                 return String::new(); // Or handle appropriately
