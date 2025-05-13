@@ -1,7 +1,7 @@
 use crate::config::HealthStatus;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use thiserror::Error;
 
 // Constants for health status to replace magic numbers

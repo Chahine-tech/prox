@@ -6,8 +6,8 @@ use tokio::time::sleep;
 
 use crate::adapters::http_client::HyperHttpClient; // Import concrete type
 use crate::config::{HealthCheckConfig, HealthStatus};
-use crate::core::backend::BackendHealth;
 use crate::core::ProxyService;
+use crate::core::backend::BackendHealth;
 use crate::ports::http_client::HttpClient; // Import the HttpClient trait for method calls
 
 pub struct HealthChecker {
