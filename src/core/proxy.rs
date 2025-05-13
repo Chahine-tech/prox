@@ -44,7 +44,7 @@ impl ProxyService {
             .values()
             .flat_map(|route_config| match route_config {
                 RouteConfig::LoadBalance { targets, .. } => targets.clone(),
-                RouteConfig::Proxy { target } => vec![target.clone()],
+                RouteConfig::Proxy { target, .. } => vec![target.clone()],
                 _ => Vec::new(),
             })
             .collect::<Vec<_>>();

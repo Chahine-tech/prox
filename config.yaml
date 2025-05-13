@@ -33,9 +33,15 @@ routes:
   "/proxy":
     type: "proxy"
     target: "https://httpbin.org"
+    path_rewrite: "/anything" # Example: rewrite /proxy/foo to /anything/foo
+  "/api/v1":
+    type: "proxy"
+    target: "http://internal-service-v1" # Assuming this is a placeholder for a real internal service
+    path_rewrite: "/" # Example: rewrite /api/v1/users to /users on the backend
   "/balance":
     type: "load_balance"
     targets:
       - "https://httpbin.org"
       - "https://postman-echo.com"
     strategy: "round_robin"
+    path_rewrite: "/newpath" # Example for load_balance

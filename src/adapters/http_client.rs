@@ -116,8 +116,31 @@ impl HttpClient for HyperHttpClient {
         let uri = req.uri().clone();
         let uri_string = uri.to_string();
 
-        // Removed Box::pin wrapper
+        // Ensure the Host header is set correctly for the outgoing request
+        if let Some(host_str) = uri.host() {
+            // Include port if present in the original URI authority
+            let host_val = if let Some(port) = uri.port() {
+                format!("{}:{}", host_str, port)
+            } else {
+                host_str.to_string()
+            };
+            match header::HeaderValue::from_str(&host_val) {
+                Ok(host_header_val) => {
+                    req.headers_mut().insert(header::HOST, host_header_val);
+                }
+                Err(e) => {
+                    tracing::error!("Invalid host string for Host header '{}': {}", host_val, e);
+                    // Optionally, return an error here if this is critical
+                    // return Err(HttpClientError::InvalidRequestError(format!("Invalid host for Host header: {}", e)));
+                }
+            }
+        } else {
+            tracing::warn!("Request URI {} has no host, cannot set Host header explicitly", uri);
+            // Optionally, return an error or rely on Hyper's default behavior
+        }
+
         tracing::info!("Sending request: {} {}", method, uri);
+        tracing::debug!("Outgoing request headers: {:?}", req.headers());
 
         // Make the request - response body is hyper::body::Incoming
         let response: Response<HyperBodyIncoming> = client.request(req).await.map_err(|err| {

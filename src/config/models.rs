@@ -126,15 +126,21 @@ pub enum RouteConfig {
     Static { root: String },
     #[serde(rename = "redirect")]
     Redirect {
-        target: String,
+        target: String, // Added target field based on usage in config.yaml
         status_code: Option<u16>,
     },
     #[serde(rename = "proxy")]
-    Proxy { target: String },
+    Proxy {
+        target: String,
+        #[serde(default)]
+        path_rewrite: Option<String>, // Added path_rewrite field
+    },
     #[serde(rename = "load_balance")]
     LoadBalance {
-        targets: Vec<String>,
+        targets: Vec<String>, // Added targets field based on usage in config.yaml
         strategy: LoadBalanceStrategy,
+        #[serde(default)]
+        path_rewrite: Option<String>, // Added path_rewrite field
     },
 }
 
@@ -156,12 +162,17 @@ impl RouteConfig {
     pub fn proxy(target: impl Into<String>) -> Self {
         RouteConfig::Proxy {
             target: target.into(),
+            path_rewrite: None,
         }
     }
 
     /// Create a load balanced route with multiple backends
     pub fn load_balance(targets: Vec<String>, strategy: LoadBalanceStrategy) -> Self {
-        RouteConfig::LoadBalance { targets, strategy }
+        RouteConfig::LoadBalance {
+            targets,
+            strategy,
+            path_rewrite: None,
+        }
     }
 
     /// Create a load balanced route builder
@@ -215,6 +226,7 @@ impl LoadBalancerBuilder {
         Ok(RouteConfig::LoadBalance {
             targets: self.targets,
             strategy,
+            path_rewrite: None,
         })
     }
 }
