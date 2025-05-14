@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
             if last_reload_attempt_time.elapsed() < debounce_duration {
                 tracing::info!("Debouncing config reload event. Still within cooldown period.");
                 // Consume any other signals that arrived during the cooldown to prevent immediate re-triggering.
-                while let Ok(_) = notify_rx.try_recv() {}
+                while notify_rx.try_recv().is_ok() {}
                 continue;
             }
             last_reload_attempt_time = tokio::time::Instant::now();
@@ -254,7 +254,7 @@ async fn main() -> Result<()> {
                 }
             }
             // Consume any other queued signals that might have arrived during processing to prevent immediate re-trigger.
-            while let Ok(_) = notify_rx.try_recv() {}
+            while notify_rx.try_recv().is_ok() {}
         }
         tracing::info!("File watcher task is shutting down.");
     });
