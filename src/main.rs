@@ -4,50 +4,22 @@ use std::time::Duration; // Added for debounce
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use notify::{RecursiveMode, Watcher}; // Removed RecommendedWatcher and event::EventKind
+use notify::{RecursiveMode, Watcher}; // Removed Watcher import, Added Watcher import
 use std::path::Path;
 use tokio::sync::{Mutex as TokioMutex, mpsc}; // Added for async mutex and channels // Added for path manipulation
 
 // Import directly from crate root where they are re-exported
 use prox::{
-    HealthChecker,
+    // HealthChecker, // Removed unused import
     HyperHttpClient,
     HyperServer,
     ProxyService,
     TowerFileSystem,
     config::loader::load_config,
-    config::models::ServerConfig, // Added for type annotation
+    // config::models::ServerConfig, // Removed unused import
     ports::http_server::HttpServer,
+    utils::health_checker_utils::spawn_health_checker_task, // Import shared helper
 };
-
-// Helper function to spawn a new health checker task
-fn spawn_health_checker_task(
-    proxy_service_to_use: Arc<ProxyService>,
-    http_client_clone: Arc<HyperHttpClient>,
-    config_for_health_check: Arc<ServerConfig>, // Pass the specific config snapshot
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        if config_for_health_check.health_check.enabled {
-            tracing::info!(
-                "Health checker task started. Interval: {}s, Path: {}, Unhealthy Threshold: {}, Healthy Threshold: {}",
-                config_for_health_check.health_check.interval_secs,
-                config_for_health_check.health_check.path,
-                config_for_health_check.health_check.unhealthy_threshold,
-                config_for_health_check.health_check.healthy_threshold
-            );
-            let health_checker = HealthChecker::new(proxy_service_to_use, http_client_clone);
-            if let Err(e) = health_checker.run().await {
-                // If the task is aborted externally, this error might reflect that,
-                // or the task might just terminate.
-                tracing::error!("Health checker run error: {}", e);
-            }
-        } else {
-            tracing::info!(
-                "Health checking is disabled by current configuration snapshot. Health checker task not running."
-            );
-        }
-    })
-}
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
@@ -86,9 +58,11 @@ async fn main() -> Result<()> {
         if current_config.health_check.enabled {
             tracing::info!("Starting initial health checker...");
             *handle_guard = Some(spawn_health_checker_task(
+                // Use shared helper
                 proxy_service_holder.read().unwrap().clone(),
                 http_client.clone(),
                 current_config.clone(),
+                "Initial".to_string(), // Pass as String
             ));
         } else {
             tracing::info!("Initial configuration has health checking disabled.");
@@ -233,9 +207,11 @@ async fn main() -> Result<()> {
                             "Starting new health checker task with updated configuration..."
                         );
                         *handle_guard = Some(spawn_health_checker_task(
+                            // Use shared helper
                             new_proxy_service.clone(), // Use the new proxy service
                             http_client_for_watcher.clone(),
                             new_config_arc.clone(), // Pass the new config snapshot
+                            "File Reload".to_string(), // Pass as String
                         ));
                     } else {
                         tracing::info!(

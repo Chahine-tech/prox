@@ -21,41 +21,15 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex as TokioMutex; // For health_checker_handle
 use tower_http::trace::TraceLayer;
 
-use crate::HealthChecker;
+// HealthChecker import might be unused if spawn_health_checker_task_from_server was its only user
+// use crate::HealthChecker;
 use crate::adapters::file_system::TowerFileSystem;
 use crate::adapters::http_client::HyperHttpClient;
 use crate::adapters::http_handler::HyperHandler;
 use crate::config::models::ServerConfig; // Ensure this is the correct path
 use crate::core::ProxyService;
 use crate::ports::http_server::{HandlerError, HttpHandler, HttpServer}; // Import HealthChecker
-
-// This helper function is similar to the one in main.rs
-// It's duplicated here for simplicity, or could be moved to a shared module.
-fn spawn_health_checker_task_from_server(
-    proxy_service_to_use: Arc<ProxyService>,
-    http_client_clone: Arc<HyperHttpClient>,
-    config_for_health_check: Arc<ServerConfig>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        if config_for_health_check.health_check.enabled {
-            tracing::info!(
-                "(API Reload) Health checker task started. Interval: {}s, Path: {}, Unhealthy Threshold: {}, Healthy Threshold: {}",
-                config_for_health_check.health_check.interval_secs,
-                config_for_health_check.health_check.path,
-                config_for_health_check.health_check.unhealthy_threshold,
-                config_for_health_check.health_check.healthy_threshold
-            );
-            let health_checker = HealthChecker::new(proxy_service_to_use, http_client_clone);
-            if let Err(e) = health_checker.run().await {
-                tracing::error!("(API Reload) Health checker run error: {}", e);
-            }
-        } else {
-            tracing::info!(
-                "(API Reload) Health checking is disabled. Health checker task not running."
-            );
-        }
-    })
-}
+use crate::utils::health_checker_utils::spawn_health_checker_task; // Import shared helper
 
 // Define a struct to hold all shared state for Axum handlers
 #[derive(Clone)]
@@ -101,6 +75,7 @@ impl HyperServer {
         );
 
         Router::new()
+            // TODO: Secure this endpoint. Add authentication/authorization.
             .route("/-/config", post(update_config_handler)) // New API endpoint
             .fallback(move |req: Request<AxumBody>| handle_request(general_handler.clone(), req))
             .with_state(self.app_state.clone()) // Provide AppState to all routes
@@ -114,6 +89,40 @@ async fn update_config_handler(
 ) -> Result<AxumResponse, AxumResponse> {
     // Return AxumResponse for both success and error
     tracing::info!("Received API request to update configuration.");
+
+    // Validate the incoming configuration payload.
+    if new_config_payload.listen_addr.is_empty() {
+        tracing::warn!("Validation failed: listen_addr is empty.");
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid config payload: listen_addr is required".to_string(),
+        )
+            .into_response());
+    }
+    if new_config_payload.routes.is_empty() {
+        tracing::warn!("Validation failed: routes cannot be empty.");
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid config payload: At least one route must be configured".to_string(),
+        )
+            .into_response());
+    }
+    // Add more validation based on ServerConfigBuilder or other rules as needed.
+    // For example, check TLS paths if TLS is enabled.
+    if let Some(tls_config) = &new_config_payload.tls {
+        if tls_config.cert_path.is_empty() || tls_config.key_path.is_empty() {
+            tracing::warn!("Validation failed: TLS cert_path or key_path is empty.");
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Invalid config payload: TLS cert_path and key_path are required if TLS is configured".to_string(),
+            )
+                .into_response());
+        }
+    }
+
+    // TODO: Consider more comprehensive validation, perhaps by trying to build
+    // a new ServerConfig using a builder pattern if that enforces all constraints,
+    // or by creating a dedicated validation function in the config module.
 
     let new_config_arc = Arc::new(new_config_payload);
 
@@ -143,10 +152,11 @@ async fn update_config_handler(
         tracing::info!(
             "(API Reload) Starting new health checker task with updated configuration..."
         );
-        *handle_guard = Some(spawn_health_checker_task_from_server(
+        *handle_guard = Some(spawn_health_checker_task(
             new_proxy_service.clone(),
             app_state.http_client.clone(),
             new_config_arc.clone(),
+            "API Reload".to_string(), // Pass as String
         ));
     } else {
         tracing::info!(
@@ -220,16 +230,11 @@ async fn handle_request(
     handler: HyperHandler, // This handler is created with a snapshot of ProxyService
     req: Request<AxumBody>,
 ) -> Result<AxumResponse, Infallible> {
-    // The HyperHandler passed to this fallback does not automatically get updates
-    // if ProxyService changes. This is a limitation of the current approach
-    // where HyperHandler takes Arc<ProxyService> directly, not Arc<RwLock<Arc<ProxyService>>>.
-    // For the fallback handler to use the latest ProxyService, it would need to access
-    // the AppState or the proxy_service_holder, or HyperHandler itself would need to be redesigned
-    // to internally hold Arc<RwLock<Arc<ProxyService>>> and read from it per request.
-    // For now, requests to the fallback will use the ProxyService state from when build_app was last called.
-    // The API endpoint for config update *does* update the shared state, so new *instances* of handlers
-    // or systems querying the holders directly would see changes.
-
+    // The HyperHandler passed to this fallback now holds an RwLock and reads the latest
+    // ProxyService state. This ensures that requests to the fallback handler use the most
+    // up-to-date ProxyService configuration. The API endpoint for config updates continues
+    // to update the shared state, allowing new instances of handlers or systems querying
+    // the holders directly to see changes in real-time.
     match handler.handle_request(req).await {
         Ok(response) => {
             let (parts, hyper_body) = response.into_parts();

@@ -9,6 +9,7 @@
 // Re-export public modules with explicit visibility controls
 pub mod config;
 pub mod ports;
+pub mod utils; // Add this line
 
 // These modules are implementation details and should not be directly used by users
 pub(crate) mod adapters;
