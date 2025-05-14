@@ -23,6 +23,7 @@ thiserror = "2.0"   # Added for better error handling
 rand = "0.9" 
 http = "1.3" 
 http-body = "1.0" 
+notify = "8.0.0" # For config file watching
 # TLS dependencies
 rustls = "0.23.27" 
 aws-lc-rs = "1.13.1" 
