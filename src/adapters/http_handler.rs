@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock}; // Added RwLock
 
 use anyhow::Result;
 use axum::body::Body as AxumBody;
@@ -17,19 +17,19 @@ use crate::ports::http_server::{HandlerError, HttpHandler}; // Import concrete t
 
 #[derive(Clone)]
 pub struct HyperHandler {
-    proxy_service: Arc<ProxyService>,
-    http_client: Arc<HyperHttpClient>, // Use concrete type
-    file_system: Arc<TowerFileSystem>, // Use concrete type
+    proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>, // Changed to holder
+    http_client: Arc<HyperHttpClient>,                    // Use concrete type
+    file_system: Arc<TowerFileSystem>,                    // Use concrete type
 }
 
 impl HyperHandler {
     pub fn new(
-        proxy_service: Arc<ProxyService>,
-        http_client: Arc<HyperHttpClient>, // Use concrete type
-        file_system: Arc<TowerFileSystem>, // Use concrete type
+        proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>, // Changed to holder
+        http_client: Arc<HyperHttpClient>,                    // Use concrete type
+        file_system: Arc<TowerFileSystem>,                    // Use concrete type
     ) -> Self {
         Self {
-            proxy_service,
+            proxy_service_holder,
             http_client,
             file_system,
         }
@@ -186,7 +186,10 @@ impl HyperHandler {
                 .unwrap();
         }
 
-        let healthy_targets = self.proxy_service.get_healthy_backends(targets);
+        // Get current ProxyService snapshot to access health data
+        let current_proxy_service = self.proxy_service_holder.read().unwrap().clone();
+        let healthy_targets = current_proxy_service.get_healthy_backends(targets);
+
         if healthy_targets.is_empty() {
             return Response::builder()
                 .status(StatusCode::SERVICE_UNAVAILABLE)
@@ -268,7 +271,10 @@ impl HttpHandler for HyperHandler {
     ) -> Result<Response<AxumBody>, HandlerError> {
         let uri = req.uri().clone();
         let path = uri.path();
-        let matched_route = self.proxy_service.find_matching_route(path);
+
+        // Get current ProxyService snapshot for routing
+        let current_proxy_service = self.proxy_service_holder.read().unwrap().clone();
+        let matched_route = current_proxy_service.find_matching_route(path);
 
         let axum_response: AxumResponse = match matched_route {
             Some((prefix, route_config)) => match route_config {
