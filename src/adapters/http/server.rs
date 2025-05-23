@@ -15,7 +15,6 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
-use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex as TokioMutex; // For health_checker_handle
@@ -198,8 +197,7 @@ impl HttpServer for HyperServer {
                     .with_context(|| format!("Failed to parse private key file: {}", key_path))?
                     .ok_or_else(|| anyhow!("No private key found in {}", key_path))?;
 
-            CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider())
-                .map_err(|e| anyhow!("Failed to install default crypto provider: {:?}", e))?;
+            // The crypto provider should be installed once globally, typically in main.rs.
 
             let server_config = rustls::ServerConfig::builder()
                 .with_no_client_auth()
@@ -238,15 +236,14 @@ async fn handle_request(
     match handler.handle_request(req).await {
         Ok(response) => {
             let (parts, hyper_body) = response.into_parts();
-            let bytes = match hyper_body.collect().await {
-                Ok(collected) => collected.to_bytes(),
-                Err(err) => {
-                    tracing::error!("Failed to collect response body in handler: {}", err);
-                    return Ok((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
-                        .into_response());
-                }
-            };
-            let axum_body = AxumBody::from(bytes);
+            // Stream the body directly instead of collecting it in memory
+            let axum_body = AxumBody::new(hyper_body.map_err(|e| {
+                // This error mapping is crucial. AxumBody expects an error type that implements Into<BoxError>.
+                // hyper::Error (which BodyExt::map_err might produce from the underlying body stream)
+                // needs to be converted. A simple way is to stringify it and box it.
+                tracing::error!("Error streaming response body to client: {}", e);
+                axum::BoxError::from(e) // Convert the error from the body stream
+            }));
             Ok(AxumResponse::from_parts(parts, axum_body))
         }
         Err(e) => {

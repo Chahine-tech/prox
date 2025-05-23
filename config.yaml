@@ -17,6 +17,7 @@ health_check:
 backend_health_paths:
   "https://httpbin.org": "/get"
   "https://postman-echo.com": "/get"
+  "https://jsonplaceholder.typicode.com": "/todos/1"
 
 routes:
   "/":  # Add root route that redirects to /static
@@ -36,7 +37,7 @@ routes:
     path_rewrite: "/anything" # Example: rewrite /proxy/foo to /anything/foo
   "/api/v1":
     type: "proxy"
-    target: "http://internal-service-v1" # Assuming this is a placeholder for a real internal service
+    target: "https://jsonplaceholder.typicode.com" # Assuming this is a placeholder for a real internal service
     path_rewrite: "/" # Example: rewrite /api/v1/users to /users on the backend
   "/balance":
     type: "load_balance"
@@ -44,4 +45,4 @@ routes:
       - "https://httpbin.org"
       - "https://postman-echo.com"
     strategy: "round_robin"
-    path_rewrite: "/newpath" # Example for load_balance
+    path_rewrite: "/anything" # Changed from /newpath to /anything to use a common echo endpoint

@@ -9,7 +9,8 @@ unexpected_cfgs = { level = "allow", check-cfg = ['cfg(test)'] }
 [dependencies]
 axum = { version = "0.8", features = ["http1", "http2"] } 
 hyper = { version = "1.6", features = ["full"] } 
-hyper-tls = "0.6" 
+hyper-rustls = "0.27.1" # Added
+rustls-native-certs = "0.7.0" # Added
 tokio = { version = "1.45.0", features = ["full"] }
 tower = "0.5" 
 tower-http = { version = "0.6.4", features = ["fs", "trace"] } 

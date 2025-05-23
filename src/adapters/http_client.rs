@@ -2,11 +2,17 @@ use axum::body::Body as AxumBody; // Use Axum's Body type
 use http_body_util::BodyExt;
 use hyper::body::Incoming as HyperBodyIncoming; // Added for clarity
 use hyper::{Request, Response, header}; // Added Response
-use hyper_util::client::legacy::Client;
+// Use legacy client from hyper-util for Hyper 1.0
+use hyper_util::client::legacy::Client as HyperClientV1;
+use hyper_util::client::legacy::connect::HttpConnector as HyperUtilHttpConnector; // Use legacy connector
 use hyper_util::rt::TokioExecutor;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::timeout; // Added for map_frame
+
+// Imports for hyper-rustls
+use hyper_rustls::HttpsConnector;
+use rustls_native_certs::load_native_certs;
 
 use crate::ports::http_client::{
     HttpClient,
@@ -31,6 +37,9 @@ pub enum HyperClientError {
         url: String,
         status: hyper::StatusCode,
     },
+
+    #[error("TLS configuration error: {0}")]
+    TlsConfigError(String),
 }
 
 impl From<HyperClientError> for HttpClientError {
@@ -44,30 +53,71 @@ impl From<HyperClientError> for HttpClientError {
             HyperClientError::FailedRequest { url, status } => {
                 HttpClientError::BackendError { url, status }
             }
+            HyperClientError::TlsConfigError(e) => {
+                HttpClientError::ConnectionError(format!("TLS Config error: {}", e))
+            }
         }
     }
 }
 
 pub struct HyperHttpClient {
-    // Use AxumBody as the concrete body type for the client
-    client: Client<
-        hyper_tls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    client: HyperClientV1<
+        HttpsConnector<HyperUtilHttpConnector>, // Changed from hyper_tls::HttpsConnector
         AxumBody,
     >,
 }
 
 impl HyperHttpClient {
     pub fn new() -> Self {
-        let mut http = hyper_util::client::legacy::connect::HttpConnector::new();
-        http.enforce_http(false);
-        let https = hyper_tls::HttpsConnector::new_with_connector(http);
+        let mut http_connector = HyperUtilHttpConnector::new(); // Create the modern connector and make it mutable
+        http_connector.enforce_http(false); // Allow non-HTTP URIs for the HttpsConnector to handle
+        // This is crucial for https_or_http() to work correctly,
+        // as the HttpsConnector needs to pass https URIs to the
+        // underlying connector for TCP stream setup before TLS.
 
-        // Build the client specifying AxumBody
-        let client = Client::builder(TokioExecutor::new())
-            .pool_idle_timeout(Duration::from_secs(30))
-            .build::<_, AxumBody>(https); // Specify AxumBody type
+        // Build rustls client config
+        let mut root_cert_store = rustls::RootCertStore::empty();
+        match load_native_certs() {
+            Ok(certs) => {
+                for cert in certs {
+                    if root_cert_store.add(cert).is_err() {
+                        tracing::warn!("Failed to add native certificate to rustls RootCertStore");
+                    }
+                }
+                tracing::info!("Loaded {} native root certificates.", root_cert_store.len());
+            }
+            Err(e) => {
+                tracing::error!("Could not load native root certificates: {}", e);
+                // Depending on policy, you might panic here or proceed with an empty store
+                // which will likely cause handshake failures.
+            }
+        }
+        if root_cert_store.is_empty() {
+            tracing::warn!(
+                "Rustls RootCertStore is empty. HTTPS connections will likely fail handshake unless custom certs are used for specific endpoints or server sends full chain."
+            );
+        }
 
-        tracing::info!("Created new HTTPS-capable HTTP client");
+        let tls_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth();
+
+        let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(tls_config)
+            .https_or_http() // Allow both HTTPS and HTTP
+            .enable_http1() // enable_http2() is often not needed explicitly or handled by underlying hyper/http-body-util
+            // .enable_http2() // Typically, HTTP/2 is negotiated if both client and server support it.
+            // If you specifically need to force or ensure HTTP/2, ensure your hyper and http-body-util versions support it well.
+            .wrap_connector(http_connector);
+
+        // Build the Hyper 1.0 client
+        let client = HyperClientV1::builder(TokioExecutor::new())
+            // Optional: Configure Hyper 1.0 client's pooling, e.g.:
+            // .pool_idle_timeout(Duration::from_secs(90))
+            // .pool_max_idle_per_host(10)
+            .build::<_, AxumBody>(https_connector);
+
+        tracing::info!("Created new HTTPS-capable HTTP client (Hyper 1.0 with hyper-rustls based)");
         Self { client }
     }
 
@@ -149,7 +199,21 @@ impl HttpClient for HyperHttpClient {
 
         // Make the request - response body is hyper::body::Incoming
         let response: Response<HyperBodyIncoming> = client.request(req).await.map_err(|err| {
-            tracing::error!("Error making request to {} {}: {}", method, uri, err);
+            // Log the full error chain
+            let mut current_err_opt: Option<&(dyn std::error::Error + 'static)> = Some(&err);
+            let mut err_chain_str = String::new();
+            while let Some(source_err) = current_err_opt {
+                err_chain_str.push_str(&format!("\n  Caused by: {}", source_err));
+                current_err_opt = source_err.source();
+            }
+            tracing::error!(
+                "Error making request to {} {}: {}{}",
+                method,
+                uri,
+                err,           // Original top-level error
+                err_chain_str  // Formatted chain of source errors
+            );
+
             // Convert hyper_util error to string for HyperClientError::RequestError
             let hyper_err = HyperClientError::RequestError(err.to_string());
             HttpClientError::from(hyper_err)
@@ -167,9 +231,9 @@ impl HttpClient for HyperHttpClient {
         // Convert hyper::body::Incoming to AxumBody
         let (parts, hyper_body) = response.into_parts();
         let axum_body = AxumBody::new(hyper_body.map_err(|e| {
-            tracing::error!("Error reading response body: {}", e);
-            // Convert hyper::Error to a type compatible with AxumBody's error
-            axum::Error::new(e)
+            tracing::error!("Error transforming response body stream: {}", e);
+            // Ensure the error is compatible with AxumBody's requirements (Into<BoxError>)
+            axum::BoxError::from(e)
         }));
 
         Ok(Response::from_parts(parts, axum_body))
