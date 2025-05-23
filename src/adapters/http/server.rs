@@ -48,7 +48,7 @@ impl HyperServer {
         config_holder: Arc<RwLock<Arc<ServerConfig>>>,
         http_client: Arc<HyperHttpClient>,
         file_system: Arc<TowerFileSystem>,
-        health_checker_handle: Arc<TokioMutex<Option<tokio::task::JoinHandle<()>>>>, // Added
+        health_checker_handle: Arc<TokioMutex<Option<tokio::task::JoinHandle<()>>>>,
     ) -> Self {
         Self {
             app_state: AppState {
@@ -66,65 +66,54 @@ impl HyperServer {
         // So it can access the latest proxy_service internally on each request.
         // The instance of HyperHandler itself can be cloned.
         let general_handler = HyperHandler::new(
-            self.app_state.proxy_service_holder.clone(), // Pass the holder
+            self.app_state.proxy_service_holder.clone(),
             self.app_state.http_client.clone(),
             self.app_state.file_system.clone(),
         );
 
         Router::new()
             // TODO: Secure this endpoint. Add authentication/authorization.
-            .route("/-/config", post(update_config_handler)) // New API endpoint
+            .route("/-/config", post(update_config_handler))
             .fallback(move |req: Request<AxumBody>| handle_request(general_handler.clone(), req))
-            .with_state(self.app_state.clone()) // Provide AppState to all routes
+            .with_state(self.app_state.clone())
             .layer(TraceLayer::new_for_http())
     }
 }
 
 async fn update_config_handler(
-    State(app_state): State<AppState>, // Access AppState using Axum's State extractor
-    Json(new_config_payload): Json<ServerConfig>, // Expect JSON body parsed into ServerConfig
+    State(app_state): State<AppState>,
+    Json(new_config_payload): Json<ServerConfig>,
 ) -> Result<AxumResponse, AxumResponse> {
-    // Return AxumResponse for both success and error
     tracing::info!("Received API request to update configuration.");
 
-    // Validate the incoming configuration payload.
-    if new_config_payload.listen_addr.is_empty() {
-        tracing::warn!("Validation failed: listen_addr is empty.");
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Invalid config payload: listen_addr is required".to_string(),
-        )
-            .into_response());
+    // Validate the incoming configuration payload using ServerConfigBuilder.
+    let mut builder = ServerConfig::builder()
+        .listen_addr(new_config_payload.listen_addr.clone()) // Clone to avoid moving from new_config_payload
+        .health_check(new_config_payload.health_check.clone());
+
+    for (prefix, route_config) in new_config_payload.routes.iter() {
+        builder = builder.route(prefix.clone(), route_config.clone());
     }
-    if new_config_payload.routes.is_empty() {
-        tracing::warn!("Validation failed: routes cannot be empty.");
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Invalid config payload: At least one route must be configured".to_string(),
-        )
-            .into_response());
-    }
-    // Add more validation based on ServerConfigBuilder or other rules as needed.
-    // For example, check TLS paths if TLS is enabled.
+
     if let Some(tls_config) = &new_config_payload.tls {
-        if tls_config.cert_path.is_empty() || tls_config.key_path.is_empty() {
-            tracing::warn!("Validation failed: TLS cert_path or key_path is empty.");
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Invalid config payload: TLS cert_path and key_path are required if TLS is configured".to_string(),
-            )
-                .into_response());
-        }
+        builder = builder.tls(tls_config.cert_path.clone(), tls_config.key_path.clone());
     }
 
-    // TODO: Consider more comprehensive validation, perhaps by trying to build
-    // a new ServerConfig using a builder pattern if that enforces all constraints,
-    // or by creating a dedicated validation function in the config module.
+    for (backend, path) in new_config_payload.backend_health_paths.iter() {
+        builder = builder.backend_health_path(backend.clone(), path.clone());
+    }
 
-    // TODO: Consider more comprehensive validation, perhaps by trying to build
-    // a new ServerConfig using a builder pattern if that enforces all constraints,
-    // or by creating a dedicated validation function in the config module.
+    if let Err(validation_err) = builder.build() {
+        tracing::warn!("Validation failed: {}", validation_err);
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Invalid config payload: {}", validation_err),
+        )
+            .into_response());
+    }
 
+    // If validation passes, proceed with the validated config (new_config_payload can be used directly
+    // as its structure matches ServerConfig, and builder was primarily for validation here)
     let new_config_arc = Arc::new(new_config_payload);
 
     // 1. Update Config Holder
@@ -157,7 +146,7 @@ async fn update_config_handler(
             new_proxy_service.clone(),
             app_state.http_client.clone(),
             new_config_arc.clone(),
-            "API Reload".to_string(), // Pass as String
+            "API Reload".to_string(),
         ));
     } else {
         tracing::info!(
@@ -244,7 +233,7 @@ async fn handle_request(
                 // hyper::Error (which BodyExt::map_err might produce from the underlying body stream)
                 // needs to be converted. A simple way is to stringify it and box it.
                 tracing::error!("Error streaming response body to client: {}", e);
-                axum::BoxError::from(e) // Convert the error from the body stream
+                axum::BoxError::from(e)
             }));
             Ok(AxumResponse::from_parts(parts, axum_body))
         }

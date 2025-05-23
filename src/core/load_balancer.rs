@@ -35,10 +35,7 @@ impl LoadBalancingStrategy for RoundRobinStrategy {
             return None;
         }
 
-        // Atomically increment and get the counter value
         let count = self.counter.fetch_add(1, Ordering::SeqCst);
-
-        // Calculate index with remainder to cycle through targets
         Some(targets[count % targets.len()].clone())
     }
 }
@@ -59,7 +56,6 @@ impl LoadBalancingStrategy for RandomStrategy {
             return None;
         }
 
-        // Use rng().random_range directly
         let index = rand::rng().random_range(0..targets.len());
         Some(targets[index].clone())
     }
