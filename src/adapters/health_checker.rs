@@ -4,22 +4,19 @@ use std::time::Duration;
 use anyhow::Result;
 use tokio::time::sleep;
 
-use crate::adapters::http_client::HyperHttpClient; // Import concrete type
+use crate::adapters::http_client::HyperHttpClient;
 use crate::config::{HealthCheckConfig, HealthStatus};
 use crate::core::ProxyService;
 use crate::core::backend::BackendHealth;
-use crate::ports::http_client::HttpClient; // Import the HttpClient trait for method calls
+use crate::ports::http_client::HttpClient;
 
 pub struct HealthChecker {
     proxy_service: Arc<ProxyService>,
-    http_client: Arc<HyperHttpClient>, // Use concrete type
+    http_client: Arc<HyperHttpClient>,
 }
 
 impl HealthChecker {
-    pub fn new(
-        proxy_service: Arc<ProxyService>,
-        http_client: Arc<HyperHttpClient>, // Use concrete type
-    ) -> Self {
+    pub fn new(proxy_service: Arc<ProxyService>, http_client: Arc<HyperHttpClient>) -> Self {
         Self {
             proxy_service,
             http_client,

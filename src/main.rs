@@ -1,12 +1,12 @@
 use std::sync::Arc;
-use std::sync::RwLock; // Added for shared mutable state
-use std::time::Duration; // Added for debounce
+use std::sync::RwLock;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use notify::{RecursiveMode, Watcher}; // Removed Watcher import, Added Watcher import
+use notify::{RecursiveMode, Watcher};
 use std::path::Path;
-use tokio::sync::{Mutex as TokioMutex, mpsc}; // Added for async mutex and channels // Added for path manipulation
+use tokio::sync::{Mutex as TokioMutex, mpsc};
 
 // Import directly from crate root where they are re-exported
 use prox::{

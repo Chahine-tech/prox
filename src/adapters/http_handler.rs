@@ -6,26 +6,25 @@ use axum::response::{IntoResponse, Response as AxumResponse};
 use hyper::{Request, Response, StatusCode};
 
 use crate::adapters::file_system::TowerFileSystem;
-use crate::adapters::http_client::HyperHttpClient; // Import concrete type
+use crate::adapters::http_client::HyperHttpClient;
 use crate::config::{LoadBalanceStrategy, RouteConfig};
 use crate::core::{LoadBalancerFactory, ProxyService};
-use crate::ports::file_system::FileSystem; // Import the FileSystem trait
-// Ensure HttpClient trait is imported to use its methods like send_request
+use crate::ports::file_system::FileSystem;
 use crate::ports::http_client::{HttpClient, HttpClientError};
-use crate::ports::http_server::{HandlerError, HttpHandler}; // Import concrete type
+use crate::ports::http_server::{HandlerError, HttpHandler};
 
 #[derive(Clone)]
 pub struct HyperHandler {
-    proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>, // Changed to holder
-    http_client: Arc<HyperHttpClient>,                    // Use concrete type
-    file_system: Arc<TowerFileSystem>,                    // Use concrete type
+    proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>,
+    http_client: Arc<HyperHttpClient>,
+    file_system: Arc<TowerFileSystem>,
 }
 
 impl HyperHandler {
     pub fn new(
-        proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>, // Changed to holder
-        http_client: Arc<HyperHttpClient>,                    // Use concrete type
-        file_system: Arc<TowerFileSystem>,                    // Use concrete type
+        proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>,
+        http_client: Arc<HyperHttpClient>,
+        file_system: Arc<TowerFileSystem>,
     ) -> Self {
         Self {
             proxy_service_holder,

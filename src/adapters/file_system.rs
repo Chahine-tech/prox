@@ -1,27 +1,22 @@
-use axum::body::Body as AxumBody; // Use Axum's Body type
+use axum::body::Body as AxumBody;
 use http_body_util::BodyExt;
 use hyper::{Request, Response};
 use std::convert::TryFrom;
 use tower::ServiceExt;
-use tower_http::services::ServeDir; // Added import
+use tower_http::services::ServeDir;
 
-use crate::ports::file_system::{FileSystem, FileSystemError, FileSystemResult}; // Removed FileServeFuture and added FileSystemResult
+use crate::ports::file_system::{FileSystem, FileSystemError, FileSystemResult};
 
-/// A file system implementation that uses tower-http's ServeDir
 #[derive(Debug, Default, Clone)]
 pub struct TowerFileSystem;
 
 impl TowerFileSystem {
-    /// Creates a new TowerFileSystem
-    ///
-    /// This is equivalent to calling `Default::default()` since TowerFileSystem has no state.
     pub fn new() -> Self {
         Self {}
     }
 }
 
 impl FileSystem for TowerFileSystem {
-    // Update function signature to use async fn and remove Pin<Box<...>>
     async fn serve_file(
         &self,
         root: &str,
@@ -31,7 +26,6 @@ impl FileSystem for TowerFileSystem {
         let root = root.to_string();
         let path = path.to_string();
 
-        // Removed Box::pin wrapper
         // Create a new request with the path adjusted for ServeDir
         let uri_string = format!("/{}", path.trim_start_matches('/'));
         let uri = hyper::Uri::try_from(uri_string)
@@ -50,7 +44,6 @@ impl FileSystem for TowerFileSystem {
             ))
         })?;
 
-        // Convert tower_http::Response<ServeFileSystemResponseBody> to hyper::Response<AxumBody>
         let (parts, tower_body) = response.into_parts();
         let axum_body = AxumBody::new(tower_body.map_err(|e| {
             tracing::error!("Error reading static file body: {}", e);

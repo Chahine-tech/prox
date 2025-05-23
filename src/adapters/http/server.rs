@@ -3,10 +3,10 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result, anyhow};
-use axum::Json; // For JSON request/response
-use axum::body::Body as AxumBody; // Keep AxumBody
-use axum::extract::State; // To access shared state in handlers
-use axum::routing::post; // For the new POST route
+use axum::Json;
+use axum::body::Body as AxumBody;
+use axum::extract::State;
+use axum::routing::post;
 use axum::{
     Router,
     http::Request,
@@ -17,18 +17,16 @@ use http_body_util::BodyExt;
 use hyper::StatusCode;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex as TokioMutex; // For health_checker_handle
+use tokio::sync::Mutex as TokioMutex;
 use tower_http::trace::TraceLayer;
 
-// HealthChecker import might be unused if spawn_health_checker_task_from_server was its only user
-// use crate::HealthChecker;
 use crate::adapters::file_system::TowerFileSystem;
 use crate::adapters::http_client::HyperHttpClient;
 use crate::adapters::http_handler::HyperHandler;
-use crate::config::models::ServerConfig; // Ensure this is the correct path
+use crate::config::models::ServerConfig;
 use crate::core::ProxyService;
-use crate::ports::http_server::{HandlerError, HttpHandler, HttpServer}; // Import HealthChecker
-use crate::utils::health_checker_utils::spawn_health_checker_task; // Import shared helper
+use crate::ports::http_server::{HandlerError, HttpHandler, HttpServer};
+use crate::utils::health_checker_utils::spawn_health_checker_task;
 
 // Define a struct to hold all shared state for Axum handlers
 #[derive(Clone)]
@@ -118,6 +116,10 @@ async fn update_config_handler(
                 .into_response());
         }
     }
+
+    // TODO: Consider more comprehensive validation, perhaps by trying to build
+    // a new ServerConfig using a builder pattern if that enforces all constraints,
+    // or by creating a dedicated validation function in the config module.
 
     // TODO: Consider more comprehensive validation, perhaps by trying to build
     // a new ServerConfig using a builder pattern if that enforces all constraints,
