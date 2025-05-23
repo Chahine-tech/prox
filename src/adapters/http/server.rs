@@ -3,10 +3,10 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result, anyhow};
-use axum::Json; // For JSON request/response
-use axum::body::Body as AxumBody; // Keep AxumBody
-use axum::extract::State; // To access shared state in handlers
-use axum::routing::post; // For the new POST route
+use axum::Json;
+use axum::body::Body as AxumBody;
+use axum::extract::State;
+use axum::routing::post;
 use axum::{
     Router,
     http::Request,
@@ -15,21 +15,18 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
-use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex as TokioMutex; // For health_checker_handle
+use tokio::sync::Mutex as TokioMutex;
 use tower_http::trace::TraceLayer;
 
-// HealthChecker import might be unused if spawn_health_checker_task_from_server was its only user
-// use crate::HealthChecker;
 use crate::adapters::file_system::TowerFileSystem;
 use crate::adapters::http_client::HyperHttpClient;
 use crate::adapters::http_handler::HyperHandler;
-use crate::config::models::ServerConfig; // Ensure this is the correct path
+use crate::config::models::ServerConfig;
 use crate::core::ProxyService;
-use crate::ports::http_server::{HandlerError, HttpHandler, HttpServer}; // Import HealthChecker
-use crate::utils::health_checker_utils::spawn_health_checker_task; // Import shared helper
+use crate::ports::http_server::{HandlerError, HttpHandler, HttpServer};
+use crate::utils::health_checker_utils::spawn_health_checker_task;
 
 // Define a struct to hold all shared state for Axum handlers
 #[derive(Clone)]
@@ -51,7 +48,7 @@ impl HyperServer {
         config_holder: Arc<RwLock<Arc<ServerConfig>>>,
         http_client: Arc<HyperHttpClient>,
         file_system: Arc<TowerFileSystem>,
-        health_checker_handle: Arc<TokioMutex<Option<tokio::task::JoinHandle<()>>>>, // Added
+        health_checker_handle: Arc<TokioMutex<Option<tokio::task::JoinHandle<()>>>>,
     ) -> Self {
         Self {
             app_state: AppState {
@@ -69,61 +66,54 @@ impl HyperServer {
         // So it can access the latest proxy_service internally on each request.
         // The instance of HyperHandler itself can be cloned.
         let general_handler = HyperHandler::new(
-            self.app_state.proxy_service_holder.clone(), // Pass the holder
+            self.app_state.proxy_service_holder.clone(),
             self.app_state.http_client.clone(),
             self.app_state.file_system.clone(),
         );
 
         Router::new()
             // TODO: Secure this endpoint. Add authentication/authorization.
-            .route("/-/config", post(update_config_handler)) // New API endpoint
+            .route("/-/config", post(update_config_handler))
             .fallback(move |req: Request<AxumBody>| handle_request(general_handler.clone(), req))
-            .with_state(self.app_state.clone()) // Provide AppState to all routes
+            .with_state(self.app_state.clone())
             .layer(TraceLayer::new_for_http())
     }
 }
 
 async fn update_config_handler(
-    State(app_state): State<AppState>, // Access AppState using Axum's State extractor
-    Json(new_config_payload): Json<ServerConfig>, // Expect JSON body parsed into ServerConfig
+    State(app_state): State<AppState>,
+    Json(new_config_payload): Json<ServerConfig>,
 ) -> Result<AxumResponse, AxumResponse> {
-    // Return AxumResponse for both success and error
     tracing::info!("Received API request to update configuration.");
 
-    // Validate the incoming configuration payload.
-    if new_config_payload.listen_addr.is_empty() {
-        tracing::warn!("Validation failed: listen_addr is empty.");
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Invalid config payload: listen_addr is required".to_string(),
-        )
-            .into_response());
+    // Validate the incoming configuration payload using ServerConfigBuilder.
+    let mut builder = ServerConfig::builder()
+        .listen_addr(new_config_payload.listen_addr.clone()) // Clone to avoid moving from new_config_payload
+        .health_check(new_config_payload.health_check.clone());
+
+    for (prefix, route_config) in new_config_payload.routes.iter() {
+        builder = builder.route(prefix.clone(), route_config.clone());
     }
-    if new_config_payload.routes.is_empty() {
-        tracing::warn!("Validation failed: routes cannot be empty.");
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Invalid config payload: At least one route must be configured".to_string(),
-        )
-            .into_response());
-    }
-    // Add more validation based on ServerConfigBuilder or other rules as needed.
-    // For example, check TLS paths if TLS is enabled.
+
     if let Some(tls_config) = &new_config_payload.tls {
-        if tls_config.cert_path.is_empty() || tls_config.key_path.is_empty() {
-            tracing::warn!("Validation failed: TLS cert_path or key_path is empty.");
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "Invalid config payload: TLS cert_path and key_path are required if TLS is configured".to_string(),
-            )
-                .into_response());
-        }
+        builder = builder.tls(tls_config.cert_path.clone(), tls_config.key_path.clone());
     }
 
-    // TODO: Consider more comprehensive validation, perhaps by trying to build
-    // a new ServerConfig using a builder pattern if that enforces all constraints,
-    // or by creating a dedicated validation function in the config module.
+    for (backend, path) in new_config_payload.backend_health_paths.iter() {
+        builder = builder.backend_health_path(backend.clone(), path.clone());
+    }
 
+    if let Err(validation_err) = builder.build() {
+        tracing::warn!("Validation failed: {}", validation_err);
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Invalid config payload: {}", validation_err),
+        )
+            .into_response());
+    }
+
+    // If validation passes, proceed with the validated config (new_config_payload can be used directly
+    // as its structure matches ServerConfig, and builder was primarily for validation here)
     let new_config_arc = Arc::new(new_config_payload);
 
     // 1. Update Config Holder
@@ -156,7 +146,7 @@ async fn update_config_handler(
             new_proxy_service.clone(),
             app_state.http_client.clone(),
             new_config_arc.clone(),
-            "API Reload".to_string(), // Pass as String
+            "API Reload".to_string(),
         ));
     } else {
         tracing::info!(
@@ -198,8 +188,7 @@ impl HttpServer for HyperServer {
                     .with_context(|| format!("Failed to parse private key file: {}", key_path))?
                     .ok_or_else(|| anyhow!("No private key found in {}", key_path))?;
 
-            CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider())
-                .map_err(|e| anyhow!("Failed to install default crypto provider: {:?}", e))?;
+            // The crypto provider should be installed once globally, typically in main.rs.
 
             let server_config = rustls::ServerConfig::builder()
                 .with_no_client_auth()
@@ -238,15 +227,14 @@ async fn handle_request(
     match handler.handle_request(req).await {
         Ok(response) => {
             let (parts, hyper_body) = response.into_parts();
-            let bytes = match hyper_body.collect().await {
-                Ok(collected) => collected.to_bytes(),
-                Err(err) => {
-                    tracing::error!("Failed to collect response body in handler: {}", err);
-                    return Ok((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
-                        .into_response());
-                }
-            };
-            let axum_body = AxumBody::from(bytes);
+            // Stream the body directly instead of collecting it in memory
+            let axum_body = AxumBody::new(hyper_body.map_err(|e| {
+                // This error mapping is crucial. AxumBody expects an error type that implements Into<BoxError>.
+                // hyper::Error (which BodyExt::map_err might produce from the underlying body stream)
+                // needs to be converted. A simple way is to stringify it and box it.
+                tracing::error!("Error streaming response body to client: {}", e);
+                axum::BoxError::from(e)
+            }));
             Ok(AxumResponse::from_parts(parts, axum_body))
         }
         Err(e) => {

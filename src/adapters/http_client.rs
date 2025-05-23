@@ -2,11 +2,17 @@ use axum::body::Body as AxumBody; // Use Axum's Body type
 use http_body_util::BodyExt;
 use hyper::body::Incoming as HyperBodyIncoming; // Added for clarity
 use hyper::{Request, Response, header}; // Added Response
-use hyper_util::client::legacy::Client;
+// Use legacy client from hyper-util for Hyper 1.0
+use hyper_util::client::legacy::Client as HyperClientV1;
+use hyper_util::client::legacy::connect::HttpConnector as HyperUtilHttpConnector; // Use legacy connector
 use hyper_util::rt::TokioExecutor;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::timeout; // Added for map_frame
+
+// Imports for hyper-rustls
+use hyper_rustls::HttpsConnector;
+use rustls_native_certs::load_native_certs;
 
 use crate::ports::http_client::{
     HttpClient,
@@ -31,6 +37,9 @@ pub enum HyperClientError {
         url: String,
         status: hyper::StatusCode,
     },
+
+    #[error("TLS configuration error: {0}")]
+    TlsConfigError(String),
 }
 
 impl From<HyperClientError> for HttpClientError {
@@ -44,34 +53,66 @@ impl From<HyperClientError> for HttpClientError {
             HyperClientError::FailedRequest { url, status } => {
                 HttpClientError::BackendError { url, status }
             }
+            HyperClientError::TlsConfigError(e) => {
+                HttpClientError::ConnectionError(format!("TLS Config error: {}", e))
+            }
         }
     }
 }
 
 pub struct HyperHttpClient {
-    // Use AxumBody as the concrete body type for the client
-    client: Client<
-        hyper_tls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
-        AxumBody,
-    >,
+    client: HyperClientV1<HttpsConnector<HyperUtilHttpConnector>, AxumBody>,
 }
 
 impl HyperHttpClient {
     pub fn new() -> Self {
-        let mut http = hyper_util::client::legacy::connect::HttpConnector::new();
-        http.enforce_http(false);
-        let https = hyper_tls::HttpsConnector::new_with_connector(http);
+        let mut http_connector = HyperUtilHttpConnector::new();
+        http_connector.enforce_http(false); // Allow non-HTTP URIs for the HttpsConnector to handle
+        // This is crucial for https_or_http() to work correctly,
+        // as the HttpsConnector needs to pass https URIs to the
+        // underlying connector for TCP stream setup before TLS.
 
-        // Build the client specifying AxumBody
-        let client = Client::builder(TokioExecutor::new())
-            .pool_idle_timeout(Duration::from_secs(30))
-            .build::<_, AxumBody>(https); // Specify AxumBody type
+        // Build rustls client config
+        let mut root_cert_store = rustls::RootCertStore::empty();
+        match load_native_certs() {
+            Ok(certs) => {
+                for cert in certs {
+                    if root_cert_store.add(cert).is_err() {
+                        tracing::warn!("Failed to add native certificate to rustls RootCertStore");
+                    }
+                }
+                tracing::info!("Loaded {} native root certificates.", root_cert_store.len());
+            }
+            Err(e) => {
+                tracing::error!("Could not load native root certificates: {}", e);
+                // Depending on policy, you might panic here or proceed with an empty store
+                // which will likely cause handshake failures.
+            }
+        }
+        if root_cert_store.is_empty() {
+            tracing::warn!(
+                "Rustls RootCertStore is empty. HTTPS connections will likely fail handshake unless custom certs are used for specific endpoints or server sends full chain."
+            );
+        }
 
-        tracing::info!("Created new HTTPS-capable HTTP client");
+        let tls_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth();
+
+        let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(tls_config)
+            .https_or_http() // Allow both HTTPS and HTTP
+            .enable_http1()
+            .wrap_connector(http_connector);
+
+        // Build the Hyper 1.0 client
+        let client =
+            HyperClientV1::builder(TokioExecutor::new()).build::<_, AxumBody>(https_connector);
+
+        tracing::info!("Created new HTTPS-capable HTTP client (Hyper 1.0 with hyper-rustls)");
         Self { client }
     }
 
-    // Update function signature to use AxumBody
     fn add_common_headers(req: &mut Request<AxumBody>) {
         let headers = req.headers_mut();
         if !headers.contains_key(header::USER_AGENT) {
@@ -104,7 +145,6 @@ impl HyperHttpClient {
 }
 
 impl HttpClient for HyperHttpClient {
-    // Update function signature to use async fn and remove Pin<Box<...>>
     async fn send_request(
         &self,
         mut req: Request<AxumBody>,
@@ -147,10 +187,22 @@ impl HttpClient for HyperHttpClient {
         tracing::info!("Sending request: {} {}", method, uri);
         tracing::debug!("Outgoing request headers: {:?}", req.headers());
 
-        // Make the request - response body is hyper::body::Incoming
         let response: Response<HyperBodyIncoming> = client.request(req).await.map_err(|err| {
-            tracing::error!("Error making request to {} {}: {}", method, uri, err);
-            // Convert hyper_util error to string for HyperClientError::RequestError
+            // Log the full error chain
+            let mut current_err_opt: Option<&(dyn std::error::Error + 'static)> = Some(&err);
+            let mut err_chain_str = String::new();
+            while let Some(source_err) = current_err_opt {
+                err_chain_str.push_str(&format!("\\n  Caused by: {}", source_err));
+                current_err_opt = source_err.source();
+            }
+            tracing::error!(
+                "Error making request to {} {}: {}{}",
+                method,
+                uri,
+                err,
+                err_chain_str
+            );
+
             let hyper_err = HyperClientError::RequestError(err.to_string());
             HttpClientError::from(hyper_err)
         })?;
@@ -167,52 +219,45 @@ impl HttpClient for HyperHttpClient {
         // Convert hyper::body::Incoming to AxumBody
         let (parts, hyper_body) = response.into_parts();
         let axum_body = AxumBody::new(hyper_body.map_err(|e| {
-            tracing::error!("Error reading response body: {}", e);
-            // Convert hyper::Error to a type compatible with AxumBody's error
-            axum::Error::new(e)
+            tracing::error!("Error transforming response body stream: {}", e);
+            // Ensure the error is compatible with AxumBody's requirements (Into<BoxError>)
+            axum::BoxError::from(e)
         }));
 
         Ok(Response::from_parts(parts, axum_body))
     }
 
-    // Update function signature to use async fn and remove Pin<Box<...>>
     async fn health_check(&self, url: &str, timeout_secs: u64) -> HttpClientResult<bool> {
         let client = self.client.clone();
-        let url = url.to_string();
+        let url_str = url.to_string(); // Renamed to avoid conflict with url in tracing messages
 
-        // Removed Box::pin wrapper
-        // Create request with an empty AxumBody
         let mut req = Request::builder()
             .method("GET")
-            .uri(&url)
-            .body(AxumBody::empty()) // Use AxumBody::empty()
-            .map_err(|e| {
-                let hyper_err = HyperClientError::from(e);
-                HttpClientError::from(hyper_err)
-            })?;
+            .uri(url)
+            .body(AxumBody::empty())
+            .map_err(|e| HttpClientError::from(HyperClientError::from(e)))?;
 
         HyperHttpClient::add_common_headers(&mut req);
         tracing::debug!("Health checking URL: {}", url);
         let timeout_duration = Duration::from_secs(timeout_secs);
+
         match timeout(timeout_duration, client.request(req)).await {
-            // request takes Request<AxumBody>
             Ok(result) => match result {
                 Ok(response) => {
                     let is_healthy = response.status().is_success();
                     // Consume the body to prevent resource leaks
                     let _ = response.into_body().collect().await;
-                    tracing::debug!("Health check for {} result: {}", url, is_healthy);
+                    tracing::debug!("Health check for {} result: {}", url_str, is_healthy);
                     Ok(is_healthy)
                 }
                 Err(err) => {
-                    // Convert hyper_util error to string before creating HttpClientError
-                    tracing::debug!("Health check error for {}: {}", url, err);
-                    // Directly return Ok(false) as per original logic for connection errors during health check
+                    tracing::debug!("Health check error for {}: {}", url_str, err);
+                    // Return Ok(false) for connection errors during health check, consistent with original logic.
                     Ok(false)
                 }
             },
             Err(_) => {
-                tracing::debug!("Health check timeout for {}", url);
+                tracing::debug!("Health check timeout for {}", url_str);
                 Err(HttpClientError::from(HyperClientError::Timeout(
                     timeout_secs,
                 )))

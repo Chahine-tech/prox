@@ -3,30 +3,28 @@ use std::sync::{Arc, RwLock}; // Added RwLock
 use anyhow::Result;
 use axum::body::Body as AxumBody;
 use axum::response::{IntoResponse, Response as AxumResponse};
-use http_body_util::BodyExt;
 use hyper::{Request, Response, StatusCode};
 
 use crate::adapters::file_system::TowerFileSystem;
-use crate::adapters::http_client::HyperHttpClient; // Import concrete type
+use crate::adapters::http_client::HyperHttpClient;
 use crate::config::{LoadBalanceStrategy, RouteConfig};
 use crate::core::{LoadBalancerFactory, ProxyService};
-use crate::ports::file_system::FileSystem; // Import the FileSystem trait
-// Ensure HttpClient trait is imported to use its methods like send_request
+use crate::ports::file_system::FileSystem;
 use crate::ports::http_client::{HttpClient, HttpClientError};
-use crate::ports::http_server::{HandlerError, HttpHandler}; // Import concrete type
+use crate::ports::http_server::{HandlerError, HttpHandler};
 
 #[derive(Clone)]
 pub struct HyperHandler {
-    proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>, // Changed to holder
-    http_client: Arc<HyperHttpClient>,                    // Use concrete type
-    file_system: Arc<TowerFileSystem>,                    // Use concrete type
+    proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>,
+    http_client: Arc<HyperHttpClient>,
+    file_system: Arc<TowerFileSystem>,
 }
 
 impl HyperHandler {
     pub fn new(
-        proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>, // Changed to holder
-        http_client: Arc<HyperHttpClient>,                    // Use concrete type
-        file_system: Arc<TowerFileSystem>,                    // Use concrete type
+        proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>,
+        http_client: Arc<HyperHttpClient>,
+        file_system: Arc<TowerFileSystem>,
     ) -> Self {
         Self {
             proxy_service_holder,
@@ -290,8 +288,12 @@ impl HttpHandler for HyperHandler {
                     target,
                     path_rewrite,
                 } => {
-                    self.handle_proxy(&target, req, &prefix, path_rewrite.as_deref())
-                        .await
+                    tracing::debug!(target = %target, path = %path, prefix = %prefix, path_rewrite = ?path_rewrite, "Entering handle_proxy in http_handler.rs");
+                    let response = self
+                        .handle_proxy(&target, req, &prefix, path_rewrite.as_deref())
+                        .await;
+                    tracing::debug!(status = ?response.status(), headers = ?response.headers(), "Exiting handle_proxy in http_handler.rs, response prepared.");
+                    response
                 }
                 RouteConfig::LoadBalance {
                     targets,
@@ -311,21 +313,9 @@ impl HttpHandler for HyperHandler {
             None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
         };
 
-        let (parts, axum_body) = axum_response.into_parts();
-
-        let bytes = match axum_body.collect().await {
-            Ok(collected) => collected.to_bytes(),
-            Err(err) => {
-                tracing::error!("Failed to collect response body: {}", err);
-                return Err(HandlerError::RequestError(format!(
-                    "Failed to collect response body: {}",
-                    err
-                )));
-            }
-        };
-
-        let body = AxumBody::from(bytes);
-
-        Ok(Response::from_parts(parts, body))
+        // Directly return the AxumResponse without collecting the body.
+        // The AxumBody within axum_response should already be the streaming body from http_client.
+        tracing::debug!(response_status = ?axum_response.status(), response_headers = ?axum_response.headers(), "HyperHandler::handle_request: Final AxumResponse before returning to server.");
+        Ok(axum_response)
     }
 }

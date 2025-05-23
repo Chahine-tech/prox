@@ -11,7 +11,7 @@ pub fn spawn_health_checker_task(
     proxy_service_to_use: Arc<ProxyService>,
     http_client_clone: Arc<HyperHttpClient>,
     config_for_health_check: Arc<ServerConfig>,
-    source_log_prefix: String, // To differentiate log source (e.g., "Initial", "File Reload", "API Reload")
+    source_log_prefix: String,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         if config_for_health_check.health_check.enabled {

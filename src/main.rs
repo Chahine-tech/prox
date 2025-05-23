@@ -1,12 +1,12 @@
 use std::sync::Arc;
-use std::sync::RwLock; // Added for shared mutable state
-use std::time::Duration; // Added for debounce
+use std::sync::RwLock;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use notify::{RecursiveMode, Watcher}; // Removed Watcher import, Added Watcher import
+use notify::{RecursiveMode, Watcher};
 use std::path::Path;
-use tokio::sync::{Mutex as TokioMutex, mpsc}; // Added for async mutex and channels // Added for path manipulation
+use tokio::sync::{Mutex as TokioMutex, mpsc};
 
 // Import directly from crate root where they are re-exported
 use prox::{
@@ -30,6 +30,24 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the crypto provider first thing.
+    // Get the aws-lc-rs provider instance.
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    if let Err(e) = rustls::crypto::CryptoProvider::install_default(provider) {
+        // If install_default fails, it might be because a provider (possibly aws-lc-rs itself)
+        // was already installed, perhaps concurrently or by another part of the application.
+        // We log this as a warning. Rustls will panic later if no provider is available
+        // when it's needed (e.g. creating TLS configs).
+        tracing::warn!(
+            "CryptoProvider::install_default for aws-lc-rs reported an error: {:?}. \
+            This can happen if a provider was already installed. \
+            The application will proceed; ensure a crypto provider is effectively available.",
+            e
+        );
+    } else {
+        tracing::info!("Successfully installed aws-lc-rs as the default crypto provider.");
+    }
+
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
