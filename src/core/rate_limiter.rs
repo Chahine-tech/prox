@@ -192,7 +192,11 @@ impl RouteRateLimiter {
                             tracing::warn!(
                                 "Could not determine client IP for IP-based rate limiting. Denying request due to policy."
                             );
-                            Err((StatusCode::BAD_REQUEST, "Cannot determine rate limiting key").into_response())
+                            Err((
+                                StatusCode::BAD_REQUEST,
+                                "Cannot determine rate limiting key",
+                            )
+                                .into_response())
                         }
                     }
                 }
@@ -217,7 +221,11 @@ impl RouteRateLimiter {
                                 "Header '{}' not found for rate limiting. Denying request due to policy.",
                                 header_name
                             );
-                            Err((StatusCode::BAD_REQUEST, "Required header for rate limiting not found").into_response())
+                            Err((
+                                StatusCode::BAD_REQUEST,
+                                "Required header for rate limiting not found",
+                            )
+                                .into_response())
                         }
                     }
                 }
