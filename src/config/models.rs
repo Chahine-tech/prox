@@ -119,35 +119,81 @@ impl Default for HealthCheckConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+fn default_status_code() -> u16 {
+    429
+}
+
+fn default_message() -> String {
+    "Too Many Requests".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RateLimitBy {
+    Ip,
+    Header,
+    Route,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RateLimitAlgorithm {
+    TokenBucket,
+    // In the future, other algorithms like FixedWindow or SlidingWindow could be added here.
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RateLimitConfig {
+    pub by: RateLimitBy,
+    #[serde(default)]
+    pub header_name: Option<String>, // Should be Some if by == Header
+    pub requests: u64,
+    pub period: String, // Parsed by humantime, e.g., "1s", "5m", "1h"
+    #[serde(default = "default_status_code")]
+    pub status_code: u16,
+    #[serde(default = "default_message")]
+    pub message: String,
+    #[serde(default)] // Defaults to None if not specified, implying TokenBucket
+    pub algorithm: Option<RateLimitAlgorithm>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type")] // Added: Use the 'type' field in YAML to determine the enum variant
+#[serde(rename_all = "snake_case")] // Added: Match snake_case YAML keys (e.g., "load_balance") to PascalCase enum variants (e.g., LoadBalance)
 pub enum RouteConfig {
-    #[serde(rename = "static")]
-    Static { root: String },
-    #[serde(rename = "redirect")]
-    Redirect {
-        target: String, // Added target field based on usage in config.yaml
-        status_code: Option<u16>,
+    Static {
+        root: String,
+        #[serde(default)]
+        rate_limit: Option<RateLimitConfig>,
     },
-    #[serde(rename = "proxy")]
+    Redirect {
+        target: String,
+        status_code: Option<u16>,
+        #[serde(default)]
+        rate_limit: Option<RateLimitConfig>,
+    },
     Proxy {
         target: String,
+        path_rewrite: Option<String>,
         #[serde(default)]
-        path_rewrite: Option<String>, // Added path_rewrite field
+        rate_limit: Option<RateLimitConfig>,
     },
-    #[serde(rename = "load_balance")]
     LoadBalance {
-        targets: Vec<String>, // Added targets field based on usage in config.yaml
+        targets: Vec<String>,
         strategy: LoadBalanceStrategy,
+        path_rewrite: Option<String>,
         #[serde(default)]
-        path_rewrite: Option<String>, // Added path_rewrite field
+        rate_limit: Option<RateLimitConfig>,
     },
 }
 
 impl RouteConfig {
     /// Create a static file serving route
     pub fn static_files(root: impl Into<String>) -> Self {
-        RouteConfig::Static { root: root.into() }
+        RouteConfig::Static {
+            root: root.into(),
+            rate_limit: None, // Add default rate_limit
+        }
     }
 
     /// Create a redirect route
@@ -155,28 +201,21 @@ impl RouteConfig {
         RouteConfig::Redirect {
             target: target.into(),
             status_code,
+            rate_limit: None, // Add default rate_limit
         }
     }
 
-    /// Create a proxy route to a single backend
-    pub fn proxy(target: impl Into<String>) -> Self {
+    /// Create a proxy route
+    pub fn proxy(target: impl Into<String>, path_rewrite: Option<String>) -> Self {
         RouteConfig::Proxy {
             target: target.into(),
-            path_rewrite: None,
+            path_rewrite,
+            rate_limit: None, // Add default rate_limit
         }
     }
 
-    /// Create a load balanced route with multiple backends
-    pub fn load_balance(targets: Vec<String>, strategy: LoadBalanceStrategy) -> Self {
-        RouteConfig::LoadBalance {
-            targets,
-            strategy,
-            path_rewrite: None,
-        }
-    }
-
-    /// Create a load balanced route builder
-    pub fn load_balancer() -> LoadBalancerBuilder {
+    /// Create a load balancer builder
+    pub fn load_balance() -> LoadBalancerBuilder {
         LoadBalancerBuilder::default()
     }
 }
@@ -186,10 +225,12 @@ impl RouteConfig {
 pub struct LoadBalancerBuilder {
     targets: Vec<String>,
     strategy: Option<LoadBalanceStrategy>,
+    path_rewrite: Option<String>,
+    rate_limit: Option<RateLimitConfig>, // Added rate_limit field
 }
 
 impl LoadBalancerBuilder {
-    /// Add a target backend
+    /// Add a target server for load balancing
     pub fn target(mut self, target: impl Into<String>) -> Self {
         self.targets.push(target.into());
         self
@@ -215,18 +256,32 @@ impl LoadBalancerBuilder {
         self
     }
 
-    /// Build the load balanced route
+    /// Set the path rewrite rule
+    pub fn path_rewrite(mut self, path_rewrite: impl Into<String>) -> Self {
+        self.path_rewrite = Some(path_rewrite.into());
+        self
+    }
+
+    /// Set the rate limit configuration
+    pub fn rate_limit(mut self, rate_limit: RateLimitConfig) -> Self {
+        self.rate_limit = Some(rate_limit);
+        self
+    }
+
+    /// Build the LoadBalance RouteConfig
     pub fn build(self) -> Result<RouteConfig, String> {
         if self.targets.is_empty() {
             return Err("At least one target must be specified for load balancing".to_string());
         }
-
-        let strategy = self.strategy.unwrap_or(LoadBalanceStrategy::RoundRobin);
+        let strategy = self
+            .strategy
+            .ok_or_else(|| "Load balancing strategy must be specified".to_string())?;
 
         Ok(RouteConfig::LoadBalance {
             targets: self.targets,
             strategy,
-            path_rewrite: None,
+            path_rewrite: self.path_rewrite,
+            rate_limit: self.rate_limit, // Ensure rate_limit is passed
         })
     }
 }

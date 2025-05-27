@@ -38,3 +38,7 @@ futures-util = "0.3"
 bytes = "1.0"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["full"]}
+
+# Rate limiting dependencies
+governor = "0.10.0"
+humantime = "2.1.0"
