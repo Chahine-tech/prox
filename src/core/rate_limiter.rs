@@ -102,65 +102,109 @@ impl RouteRateLimiter {
         let period_duration = humantime::parse_duration(&config.period)
             .map_err(|e| format!("Invalid period string '{}': {}", config.period, e))?;
 
-        let quota = Quota::with_period(period_duration)
-            .ok_or_else(|| format!("Invalid period duration for quota: {:?}", period_duration))?
-            .allow_burst(
-                NonZeroU32::new(config.requests as u32)
-                    .unwrap_or_else(|| NonZeroU32::new(1).unwrap()), // Ensure burst is at least 1
-            );
+        let quota_requests = NonZeroU32::new(config.requests as u32)
+            .ok_or_else(|| "Rate limit 'requests' must be greater than 0".to_string())?;
 
-        let status_code =
-            StatusCode::from_u16(config.status_code).unwrap_or(StatusCode::TOO_MANY_REQUESTS); // Default if u16 is invalid
+        // Configure Quota based on the algorithm.
+        // For TokenBucket and SlidingWindow (using GCRA), we allow bursts up to the number of requests.
+        // For FixedWindow, burst is typically 1 to strictly enforce the window, or could be `quota_requests`
+        // if we want to allow all requests at the beginning of the window.
+        // Governor's core algorithm is GCRA, which behaves like a token bucket or leaky bucket.
+        // We'll map our enum variants to Quota configurations.
+        let quota = match config.algorithm {
+            RateLimitAlgorithm::TokenBucket => {
+                // TokenBucket allows bursts up to the number of requests over the specified period.
+                // Uses governor's GCRA, which behaves like a token bucket.
+                Quota::with_period(period_duration)
+                    .ok_or_else(|| {
+                        format!(
+                            "Invalid period duration for TokenBucket: {:?}",
+                            period_duration
+                        )
+                    })?
+                    .allow_burst(quota_requests)
+            }
+            RateLimitAlgorithm::SlidingWindow => {
+                // SlidingWindow, using governor's GCRA, allows a number of requests within any
+                // sliding time window of the specified period. GCRA is inherently a sliding window algorithm.
+                // This configuration allows bursts up to the number of requests.
+                Quota::with_period(period_duration)
+                    .ok_or_else(|| {
+                        format!(
+                            "Invalid period duration for SlidingWindow: {:?}",
+                            period_duration
+                        )
+                    })?
+                    .allow_burst(quota_requests)
+            }
+            RateLimitAlgorithm::FixedWindow => {
+                // FixedWindow, as implemented with governor, allows `requests` per `period_duration`.
+                // This specific configuration allows all `requests` to be consumed at the start of any
+                // period (i.e., burst capacity equals the total requests for the window).
+                // This is a common interpretation of "N requests per fixed period P".
+                //
+                // For a "stricter" fixed window (e.g., smoothed rate without large bursts, or
+                // a counter that resets sharply at window boundaries), a different Quota setup
+                // (like a rate-based quota with a small burst) or a different rate-limiting
+                // library/mechanism might be necessary, as governor's core is GCRA.
+                Quota::with_period(period_duration)
+                    .ok_or_else(|| {
+                        format!(
+                            "Invalid period duration for FixedWindow: {:?}",
+                            period_duration
+                        )
+                    })?
+                    .allow_burst(quota_requests)
+            }
+        };
 
-        // Algorithm handling: Currently, only TokenBucket (default governor behavior) is supported.
-        // Future algorithms might require different Quota setups or even different limiter types.
-        match config.algorithm {
-            Some(RateLimitAlgorithm::TokenBucket) | None => {
-                // TokenBucket is achieved via Quota::allow_burst, which is already configured.
-            } // Add other algorithm arms here if/when supported
-              // e.g., Some(RateLimitAlgorithm::SlidingWindow) => return Err("SlidingWindow not yet implemented".to_string()),
-        }
+        let status_code = StatusCode::from_u16(config.status_code)
+            .map_err(|_| format!("Invalid status code: {}", config.status_code))?;
+
+        tracing::info!(
+            "Creating rate limiter: by={:?}, algorithm={:?}, requests={}, period={}, status_code={}, on_missing_key={:?}",
+            config.by,
+            config.algorithm,
+            config.requests,
+            config.period,
+            config.status_code,
+            config.on_missing_key
+        );
 
         match config.by {
             RateLimitBy::Route => {
-                // For non-keyed limiters, RateLimiter::direct uses InMemoryState by default.
-                let limiter = DirectRateLimiterImpl::direct(quota);
-                Ok(RouteRateLimiter::Route(Arc::new(RouteSpecificLimiter {
-                    limiter,
+                let limiter = Arc::new(LimiterWrapper {
+                    limiter: RateLimiter::direct(quota),
                     status_code,
                     message: config.message.clone(),
-                    on_missing_key: config.on_missing_key, // Pass policy
-                })))
+                    on_missing_key: config.on_missing_key,
+                });
+                Ok(RouteRateLimiter::Route(limiter))
             }
             RateLimitBy::Ip => {
-                // For keyed limiters with DashMapStateStore.
-                let store = DashMapStateStore::<IpAddr>::default();
-                let clock = DefaultClock::default(); // Create clock instance
-                let limiter = KeyedRateLimiterImpl::<IpAddr>::new(quota, store, clock); // Pass clock by value
-                Ok(RouteRateLimiter::Ip(Arc::new(IpLimiter {
-                    limiter,
+                let limiter = Arc::new(LimiterWrapper {
+                    limiter: RateLimiter::keyed(quota),
                     status_code,
                     message: config.message.clone(),
-                    on_missing_key: config.on_missing_key, // Pass policy
-                })))
+                    on_missing_key: config.on_missing_key,
+                });
+                Ok(RouteRateLimiter::Ip(limiter))
             }
             RateLimitBy::Header => {
-                let header_name_str = config.header_name.as_deref().ok_or_else(|| {
-                    "`header_name` must be specified for header-based rate limiting".to_string()
-                })?;
+                let header_name_str = config
+                    .header_name
+                    .as_ref()
+                    .ok_or_else(|| "header_name is required for RateLimitBy::Header".to_string())?;
                 let header_name = HeaderName::from_bytes(header_name_str.as_bytes())
-                    .map_err(|e| format!("Invalid header name '{}': {}", header_name_str, e))?;
-
-                let store = DashMapStateStore::<String>::default();
-                let clock = DefaultClock::default(); // Create clock instance
-                let limiter = KeyedRateLimiterImpl::<String>::new(quota, store, clock); // Pass clock by value
+                    .map_err(|e| format!("Invalid header_name '{}': {}", header_name_str, e))?;
+                let limiter = Arc::new(LimiterWrapper {
+                    limiter: RateLimiter::keyed(quota),
+                    status_code,
+                    message: config.message.clone(),
+                    on_missing_key: config.on_missing_key,
+                });
                 Ok(RouteRateLimiter::Header {
-                    limiter: Arc::new(HeaderLimiter {
-                        limiter,
-                        status_code,
-                        message: config.message.clone(),
-                        on_missing_key: config.on_missing_key, // Pass policy
-                    }),
+                    limiter,
                     header_name,
                 })
             }
@@ -170,33 +214,36 @@ impl RouteRateLimiter {
     /// Checks if a request is allowed based on the configured rate limiting rules.
     /// Returns `Ok(())` if allowed, or `Err(AxumResponse)` if rate-limited.
     pub fn check<B>(
-        // B is the request body type, typically axum::body::Body
         &self,
         req: &Request<B>,
-        connect_info: Option<&ConnectInfo<SocketAddr>>, // Passed from the handler
+        connect_info: Option<&ConnectInfo<SocketAddr>>,
     ) -> Result<(), AxumResponse> {
         match self {
-            RouteRateLimiter::Route(limiter) => limiter.check_route(),
+            RouteRateLimiter::Route(limiter) => {
+                tracing::trace!("Checking route-specific rate limit");
+                limiter.check_route().map_err(|e| {
+                    tracing::warn!("Route rate limit exceeded");
+                    e
+                })
+            }
             RouteRateLimiter::Ip(limiter) => {
                 if let Some(ConnectInfo(addr)) = connect_info {
-                    limiter.check_ip(addr.ip())
+                    let ip = addr.ip();
+                    tracing::trace!("Checking IP-based rate limit for IP: {}", ip);
+                    limiter.check_ip(ip).map_err(|e| {
+                        tracing::warn!("IP rate limit exceeded for {}: {}", ip, limiter.message);
+                        e
+                    })
                 } else {
+                    tracing::warn!("IP rate limiting configured, but ConnectInfo not available.");
+                    // Handle missing IP based on policy
                     match limiter.on_missing_key {
-                        MissingKeyPolicy::Allow => {
-                            tracing::warn!(
-                                "Could not determine client IP for IP-based rate limiting. Allowing request due to policy."
-                            );
-                            Ok(())
-                        }
+                        MissingKeyPolicy::Allow => Ok(()),
                         MissingKeyPolicy::Deny => {
                             tracing::warn!(
-                                "Could not determine client IP for IP-based rate limiting. Denying request due to policy."
+                                "Denying request due to missing IP for IP-based rate limiting and Deny policy."
                             );
-                            Err((
-                                StatusCode::BAD_REQUEST,
-                                "Cannot determine rate limiting key",
-                            )
-                                .into_response())
+                            Err((limiter.status_code, limiter.message.clone()).into_response())
                         }
                     }
                 }
@@ -205,27 +252,53 @@ impl RouteRateLimiter {
                 limiter,
                 header_name,
             } => {
-                if let Some(value) = req.headers().get(header_name).and_then(|v| v.to_str().ok()) {
-                    limiter.check_header_value(value)
-                } else {
-                    match limiter.on_missing_key {
-                        MissingKeyPolicy::Allow => {
-                            tracing::debug!(
-                                "Header '{}' not found for rate limiting. Allowing request due to policy.",
-                                header_name
+                tracing::trace!(
+                    "Checking header-based rate limit for header: {}",
+                    header_name
+                );
+                if let Some(value) = req.headers().get(header_name) {
+                    if let Ok(value_str) = value.to_str() {
+                        limiter.check_header_value(value_str).map_err(|e| {
+                            tracing::warn!(
+                                "Header rate limit exceeded for header '{}', value '{}': {}",
+                                header_name,
+                                value_str,
+                                limiter.message
                             );
-                            Ok(())
+                            e
+                        })
+                    } else {
+                        tracing::warn!(
+                            "Header '{}' value is not valid UTF-8. Applying on_missing_key policy.",
+                            header_name
+                        );
+                        // Handle non-UTF-8 header value based on policy
+                        match limiter.on_missing_key {
+                            MissingKeyPolicy::Allow => Ok(()),
+                            MissingKeyPolicy::Deny => {
+                                tracing::warn!(
+                                    "Denying request due to non-UTF-8 header value for {} and Deny policy.",
+                                    header_name
+                                );
+                                Err((limiter.status_code, limiter.message.clone()).into_response())
+                            }
                         }
+                    }
+                } else {
+                    tracing::debug!(
+                        "Header '{}' not found for rate limiting. Applying on_missing_key policy: {:?}",
+                        header_name,
+                        limiter.on_missing_key
+                    );
+                    // Handle missing header based on policy
+                    match limiter.on_missing_key {
+                        MissingKeyPolicy::Allow => Ok(()),
                         MissingKeyPolicy::Deny => {
-                            tracing::debug!(
-                                "Header '{}' not found for rate limiting. Denying request due to policy.",
+                            tracing::warn!(
+                                "Denying request due to missing header {} and Deny policy.",
                                 header_name
                             );
-                            Err((
-                                StatusCode::BAD_REQUEST,
-                                "Required header for rate limiting not found",
-                            )
-                                .into_response())
+                            Err((limiter.status_code, limiter.message.clone()).into_response())
                         }
                     }
                 }

@@ -139,7 +139,9 @@ pub enum RateLimitBy {
 #[serde(rename_all = "snake_case")]
 pub enum RateLimitAlgorithm {
     TokenBucket,
-    // In the future, other algorithms like FixedWindow or SlidingWindow could be added here.
+    FixedWindow, // Added: For Fixed Window algorithm
+    SlidingWindow, // Added: For Sliding Window algorithm
+                 // In the future, other algorithms like FixedWindow or SlidingWindow could be added here.
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -164,10 +166,15 @@ pub struct RateLimitConfig {
     pub status_code: u16,
     #[serde(default = "default_message")]
     pub message: String,
-    #[serde(default)] // Defaults to None if not specified, implying TokenBucket
-    pub algorithm: Option<RateLimitAlgorithm>,
+    #[serde(default = "default_rate_limit_algorithm")] // Changed: Default to TokenBucket
+    pub algorithm: RateLimitAlgorithm, // Changed: Made non-optional
     #[serde(default = "default_on_missing_key")]
     pub on_missing_key: MissingKeyPolicy,
+}
+
+fn default_rate_limit_algorithm() -> RateLimitAlgorithm {
+    // Added: Default function
+    RateLimitAlgorithm::TokenBucket
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
