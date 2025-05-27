@@ -240,7 +240,9 @@ impl RouteRateLimiter {
                             tracing::warn!(
                                 "Denying request due to missing IP for IP-based rate limiting and Deny policy."
                             );
-                            Err(Box::new((limiter.status_code, limiter.message.clone()).into_response()))
+                            Err(Box::new(
+                                (limiter.status_code, limiter.message.clone()).into_response(),
+                            ))
                         }
                     }
                 }
@@ -276,7 +278,9 @@ impl RouteRateLimiter {
                                     "Denying request due to non-UTF-8 header value for {} and Deny policy.",
                                     header_name
                                 );
-                                Err(Box::new((limiter.status_code, limiter.message.clone()).into_response()))
+                                Err(Box::new(
+                                    (limiter.status_code, limiter.message.clone()).into_response(),
+                                ))
                             }
                         }
                     }
@@ -294,7 +298,9 @@ impl RouteRateLimiter {
                                 "Denying request due to missing header {} and Deny policy.",
                                 header_name
                             );
-                            Err(Box::new((limiter.status_code, limiter.message.clone()).into_response()))
+                            Err(Box::new(
+                                (limiter.status_code, limiter.message.clone()).into_response(),
+                            ))
                         }
                     }
                 }
