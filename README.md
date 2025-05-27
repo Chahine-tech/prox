@@ -152,20 +152,20 @@ You can test the proxy using curl:
 
 ```bash
 # Test static content
-curl -k https://127.0.0.1:3002/static
+curl -k https://127.0.0.1:3000/static
 
 # Test redirection
-curl -k -L https://127.0.0.1:3002/
+curl -k -L https://127.0.0.1:3000/
 
 # Test proxy
-curl -k https://127.0.0.1:3002/proxy/get
+curl -k https://127.0.0.1:3000/proxy/get
 
 # Test proxy with path rewriting
-curl -k https://127.0.0.1:3002/proxy/test/path # Assuming /proxy has path_rewrite: "/anything"
+curl -k https://127.0.0.1:3000/proxy/test/path # Assuming /proxy has path_rewrite: "/anything"
 # Expected: httpbin.org receives a request for /anything/test/path
 
 # Test load balancing (run multiple times to see round-robin in action)
-curl -k https://127.0.0.1:3002/balance/get
+curl -k https://127.0.0.1:3000/balance/get
 ```
 
 Note: The `-k` flag is used to skip certificate validation for self-signed certificates.

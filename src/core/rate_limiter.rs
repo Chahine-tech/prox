@@ -1,4 +1,3 @@
-// Standard library imports
 use std::hash::Hash;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
