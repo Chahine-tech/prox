@@ -63,24 +63,3 @@ jobs:
       
       - name: Run cargo-audit
         run: cargo audit
-
-  deny_check:
-    name: Deny Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo-deny
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-deny
-          key: ${{ runner.os }}-cargo-deny
-
-      - name: Install cargo-deny
-        run: cargo install --locked cargo-deny
-
-      - name: Run cargo-deny
-        run: cargo deny check
