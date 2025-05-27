@@ -326,16 +326,14 @@ impl HttpHandler for HyperHandler {
                     match self.get_or_create_rate_limiter(&prefix, rl_config).await {
                         Ok(limiter) => {
                             // Extract ConnectInfo for IP-based rate limiting
-                            // This assumes ConnectInfo<SocketAddr> is available in request extensions,
-                            // which requires the Axum server to be started with `into_make_service_with_connect_info`.
                             let client_addr_info =
                                 req.extensions().get::<ConnectInfo<SocketAddr>>();
 
-                            if let Err(response) = limiter.check(&req, client_addr_info) {
-                                return Ok(response); // Return rate limited response
+                            if let Err(boxed_response) = limiter.check(&req, client_addr_info) {
+                                return Ok(*boxed_response); // Return rate limited response, dereferencing the Box
                             }
                         }
-                        Err(response) => return Ok(response), // Error creating limiter
+                        Err(response) => return Ok(response), // Error creating limiter - this response is not boxed
                     }
                 }
 

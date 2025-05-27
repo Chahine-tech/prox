@@ -41,10 +41,10 @@ pub type HeaderLimiter = LimiterWrapper<KeyedRateLimiterImpl<String>>;
 
 // Implementation for non-keyed (direct) limiters
 impl LimiterWrapper<DirectRateLimiterImpl> {
-    pub fn check_route(&self) -> Result<(), AxumResponse> {
+    pub fn check_route(&self) -> Result<(), Box<AxumResponse>> {
         if self.limiter.check().is_err() {
             let response = (self.status_code, self.message.clone()).into_response();
-            Err(response)
+            Err(Box::new(response))
         } else {
             Ok(())
         }
@@ -57,10 +57,10 @@ where
     K: Clone + Hash + Eq + Send + Sync + 'static, // Key constraints for DashMapStateStore
 {
     // Generic check method for keyed limiters
-    fn check_keyed(&self, key: &K) -> Result<(), AxumResponse> {
+    fn check_keyed(&self, key: &K) -> Result<(), Box<AxumResponse>> {
         if self.limiter.check_key(key).is_err() {
             let response = (self.status_code, self.message.clone()).into_response();
-            Err(response)
+            Err(Box::new(response))
         } else {
             Ok(())
         }
@@ -69,14 +69,14 @@ where
 
 // Specific check method for IP-based limiters
 impl IpLimiter {
-    pub fn check_ip(&self, ip: IpAddr) -> Result<(), AxumResponse> {
+    pub fn check_ip(&self, ip: IpAddr) -> Result<(), Box<AxumResponse>> {
         self.check_keyed(&ip) // Delegates to the generic keyed check
     }
 }
 
 // Specific check method for header-based limiters
 impl HeaderLimiter {
-    pub fn check_header_value(&self, value: &str) -> Result<(), AxumResponse> {
+    pub fn check_header_value(&self, value: &str) -> Result<(), Box<AxumResponse>> {
         // The key for DashMapStateStore<String> is String, so convert &str to String
         self.check_keyed(&value.to_string())
     }
@@ -216,7 +216,7 @@ impl RouteRateLimiter {
         &self,
         req: &Request<B>,
         connect_info: Option<&ConnectInfo<SocketAddr>>,
-    ) -> Result<(), AxumResponse> {
+    ) -> Result<(), Box<AxumResponse>> {
         match self {
             RouteRateLimiter::Route(limiter) => {
                 tracing::trace!("Checking route-specific rate limit");
@@ -240,7 +240,7 @@ impl RouteRateLimiter {
                             tracing::warn!(
                                 "Denying request due to missing IP for IP-based rate limiting and Deny policy."
                             );
-                            Err((limiter.status_code, limiter.message.clone()).into_response())
+                            Err(Box::new((limiter.status_code, limiter.message.clone()).into_response()))
                         }
                     }
                 }
@@ -257,7 +257,7 @@ impl RouteRateLimiter {
                     if let Ok(value_str) = value.to_str() {
                         limiter.check_header_value(value_str).inspect_err(|_e| {
                             tracing::warn!(
-                                "Header rate limit exceeded for header '{}', value '{}': {}",
+                                "Header rate limit exceeded for header \'{}\', value \'{}\': {}",
                                 header_name,
                                 value_str,
                                 limiter.message
@@ -265,7 +265,7 @@ impl RouteRateLimiter {
                         })
                     } else {
                         tracing::warn!(
-                            "Header '{}' value is not valid UTF-8. Applying on_missing_key policy.",
+                            "Header \'{}\' value is not valid UTF-8. Applying on_missing_key policy.",
                             header_name
                         );
                         // Handle non-UTF-8 header value based on policy
@@ -276,13 +276,13 @@ impl RouteRateLimiter {
                                     "Denying request due to non-UTF-8 header value for {} and Deny policy.",
                                     header_name
                                 );
-                                Err((limiter.status_code, limiter.message.clone()).into_response())
+                                Err(Box::new((limiter.status_code, limiter.message.clone()).into_response()))
                             }
                         }
                     }
                 } else {
                     tracing::debug!(
-                        "Header '{}' not found for rate limiting. Applying on_missing_key policy: {:?}",
+                        "Header \'{}\' not found for rate limiting. Applying on_missing_key policy: {:?}",
                         header_name,
                         limiter.on_missing_key
                     );
@@ -294,7 +294,7 @@ impl RouteRateLimiter {
                                 "Denying request due to missing header {} and Deny policy.",
                                 header_name
                             );
-                            Err((limiter.status_code, limiter.message.clone()).into_response())
+                            Err(Box::new((limiter.status_code, limiter.message.clone()).into_response()))
                         }
                     }
                 }

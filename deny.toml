@@ -4,7 +4,7 @@
 # You can specify `severity-threshold` or `ignore` specific advisories if needed.
 [advisories]
 vulnerability = "deny"
-unmaintained = "warn"
+unmaintained = { scope = "all", action = "warn" } # Corrected: specify scope and action
 yanked = "warn" # Or "deny" if you want to be stricter
 notice = "warn"
 ignore = [
