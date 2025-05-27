@@ -15,7 +15,7 @@ use governor::state::keyed::DashMapStateStore;
 use governor::state::{InMemoryState, NotKeyed};
 use governor::{Quota, RateLimiter};
 
-use crate::config::models::{RateLimitAlgorithm, RateLimitBy, RateLimitConfig};
+use crate::config::models::{MissingKeyPolicy, RateLimitAlgorithm, RateLimitBy, RateLimitConfig};
 
 // --- LimiterWrapper Definition ---
 // LimiterWrapper holds a RateLimiter instance and the response details for when the limit is exceeded.
@@ -25,6 +25,7 @@ pub struct LimiterWrapper<RL> {
     pub limiter: RL,
     pub status_code: StatusCode,
     pub message: String,
+    pub on_missing_key: MissingKeyPolicy, // Added field
 }
 
 // --- Type Aliases for specific RateLimiter configurations ---
@@ -128,6 +129,7 @@ impl RouteRateLimiter {
                     limiter,
                     status_code,
                     message: config.message.clone(),
+                    on_missing_key: config.on_missing_key, // Pass policy
                 })))
             }
             RateLimitBy::Ip => {
@@ -139,6 +141,7 @@ impl RouteRateLimiter {
                     limiter,
                     status_code,
                     message: config.message.clone(),
+                    on_missing_key: config.on_missing_key, // Pass policy
                 })))
             }
             RateLimitBy::Header => {
@@ -156,6 +159,7 @@ impl RouteRateLimiter {
                         limiter,
                         status_code,
                         message: config.message.clone(),
+                        on_missing_key: config.on_missing_key, // Pass policy
                     }),
                     header_name,
                 })
@@ -177,12 +181,20 @@ impl RouteRateLimiter {
                 if let Some(ConnectInfo(addr)) = connect_info {
                     limiter.check_ip(addr.ip())
                 } else {
-                    // Log a warning if IP cannot be determined for IP-based limiting.
-                    // Policy: Allow the request. Could be changed to deny.
-                    tracing::warn!(
-                        "Could not determine client IP for IP-based rate limiting. Allowing request."
-                    );
-                    Ok(())
+                    match limiter.on_missing_key {
+                        MissingKeyPolicy::Allow => {
+                            tracing::warn!(
+                                "Could not determine client IP for IP-based rate limiting. Allowing request due to policy."
+                            );
+                            Ok(())
+                        }
+                        MissingKeyPolicy::Deny => {
+                            tracing::warn!(
+                                "Could not determine client IP for IP-based rate limiting. Denying request due to policy."
+                            );
+                            Err((StatusCode::BAD_REQUEST, "Cannot determine rate limiting key").into_response())
+                        }
+                    }
                 }
             }
             RouteRateLimiter::Header {
@@ -192,13 +204,22 @@ impl RouteRateLimiter {
                 if let Some(value) = req.headers().get(header_name).and_then(|v| v.to_str().ok()) {
                     limiter.check_header_value(value)
                 } else {
-                    // Log if the specified header is not found.
-                    // Policy: Allow the request. Could be changed to deny.
-                    tracing::debug!(
-                        "Header '{}' not found for rate limiting. Allowing request.",
-                        header_name
-                    );
-                    Ok(())
+                    match limiter.on_missing_key {
+                        MissingKeyPolicy::Allow => {
+                            tracing::debug!(
+                                "Header '{}' not found for rate limiting. Allowing request due to policy.",
+                                header_name
+                            );
+                            Ok(())
+                        }
+                        MissingKeyPolicy::Deny => {
+                            tracing::debug!(
+                                "Header '{}' not found for rate limiting. Denying request due to policy.",
+                                header_name
+                            );
+                            Err((StatusCode::BAD_REQUEST, "Required header for rate limiting not found").into_response())
+                        }
+                    }
                 }
             }
         }

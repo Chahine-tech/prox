@@ -142,6 +142,17 @@ pub enum RateLimitAlgorithm {
     // In the future, other algorithms like FixedWindow or SlidingWindow could be added here.
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MissingKeyPolicy {
+    Allow,
+    Deny,
+}
+
+fn default_on_missing_key() -> MissingKeyPolicy {
+    MissingKeyPolicy::Allow
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RateLimitConfig {
     pub by: RateLimitBy,
@@ -155,6 +166,8 @@ pub struct RateLimitConfig {
     pub message: String,
     #[serde(default)] // Defaults to None if not specified, implying TokenBucket
     pub algorithm: Option<RateLimitAlgorithm>,
+    #[serde(default = "default_on_missing_key")]
+    pub on_missing_key: MissingKeyPolicy,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
