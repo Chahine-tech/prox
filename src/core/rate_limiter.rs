@@ -221,18 +221,16 @@ impl RouteRateLimiter {
         match self {
             RouteRateLimiter::Route(limiter) => {
                 tracing::trace!("Checking route-specific rate limit");
-                limiter.check_route().map_err(|e| {
+                limiter.check_route().inspect_err(|_e| {
                     tracing::warn!("Route rate limit exceeded");
-                    e
                 })
             }
             RouteRateLimiter::Ip(limiter) => {
                 if let Some(ConnectInfo(addr)) = connect_info {
                     let ip = addr.ip();
                     tracing::trace!("Checking IP-based rate limit for IP: {}", ip);
-                    limiter.check_ip(ip).map_err(|e| {
+                    limiter.check_ip(ip).inspect_err(|_e| {
                         tracing::warn!("IP rate limit exceeded for {}: {}", ip, limiter.message);
-                        e
                     })
                 } else {
                     tracing::warn!("IP rate limiting configured, but ConnectInfo not available.");
@@ -258,14 +256,13 @@ impl RouteRateLimiter {
                 );
                 if let Some(value) = req.headers().get(header_name) {
                     if let Ok(value_str) = value.to_str() {
-                        limiter.check_header_value(value_str).map_err(|e| {
+                        limiter.check_header_value(value_str).inspect_err(|_e| {
                             tracing::warn!(
                                 "Header rate limit exceeded for header '{}', value '{}': {}",
                                 header_name,
                                 value_str,
                                 limiter.message
                             );
-                            e
                         })
                     } else {
                         tracing::warn!(
