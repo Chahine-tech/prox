@@ -202,10 +202,16 @@ impl HttpServer for HyperServer {
                 .await
                 .map_err(|e| anyhow!("TLS Server error: {}", e))?;
         } else {
-            tracing::info!("Starting server without TLS on {}", addr);
+            tracing::info!(
+                "Starting server without TLS on {} (with HTTP/2 support)",
+                addr
+            );
             let listener = TcpListener::bind(addr)
                 .await
                 .with_context(|| format!("Failed to bind to address: {}", addr))?;
+
+            // Use regular axum server - HTTP/2 will work if the client negotiates it
+            // The client side is already HTTP/2 capable
             axum::serve(listener, app.into_make_service())
                 .await
                 .map_err(|e| anyhow!("HTTP Server error: {}", e))?;

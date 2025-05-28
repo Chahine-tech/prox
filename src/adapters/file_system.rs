@@ -38,10 +38,7 @@ impl FileSystem for TowerFileSystem {
         // Use ServeDir from tower-http
         let serve_dir = ServeDir::new(&root);
         let response = serve_dir.oneshot(new_req).await.map_err(|e| {
-            FileSystemError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("ServeDir error: {}", e),
-            ))
+            FileSystemError::IoError(std::io::Error::other(format!("ServeDir error: {}", e)))
         })?;
 
         let (parts, tower_body) = response.into_parts();

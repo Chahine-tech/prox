@@ -35,10 +35,24 @@ routes:
     type: "proxy"
     target: "https://httpbin.org"
     path_rewrite: "/anything" # Example: rewrite /proxy/foo to /anything/foo
+    rate_limit: # Example: Limit by IP, 10 requests per minute
+      by: "ip"
+      requests: 10
+      period: "1m"
+      # status_code: 429 # Optional: defaults to 429
+      # message: "Too many requests from your IP. Please try again later." # Optional: defaults to "Too Many Requests"
+      # algorithm: "token_bucket" # Optional: defaults to token_bucket
   "/api/v1":
     type: "proxy"
     target: "https://jsonplaceholder.typicode.com" # Assuming this is a placeholder for a real internal service
     path_rewrite: "/" # Example: rewrite /api/v1/users to /users on the backend
+    rate_limit: # Example: Limit by a specific header X-API-Key, 5 requests per 30 seconds
+      by: "header"
+      header_name: "X-API-Key"
+      requests: 5
+      period: "30s"
+      status_code: 403
+      message: "Rate limit exceeded for your API key."
   "/balance":
     type: "load_balance"
     targets:
@@ -46,3 +60,7 @@ routes:
       - "https://postman-echo.com"
     strategy: "round_robin"
     path_rewrite: "/anything" # Changed from /newpath to /anything to use a common echo endpoint
+    rate_limit: # Example: Route-wide limit, 100 requests per hour
+      by: "route"
+      requests: 100
+      period: "1h"

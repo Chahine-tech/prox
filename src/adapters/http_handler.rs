@@ -1,14 +1,18 @@
-use std::sync::{Arc, RwLock}; // Added RwLock
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use tokio::sync::Mutex;
 
 use anyhow::Result;
 use axum::body::Body as AxumBody;
+use axum::extract::ConnectInfo;
 use axum::response::{IntoResponse, Response as AxumResponse};
 use hyper::{Request, Response, StatusCode};
+use std::net::SocketAddr;
 
 use crate::adapters::file_system::TowerFileSystem;
 use crate::adapters::http_client::HyperHttpClient;
-use crate::config::{LoadBalanceStrategy, RouteConfig};
-use crate::core::{LoadBalancerFactory, ProxyService};
+use crate::config::{LoadBalanceStrategy, RateLimitConfig, RouteConfig};
+use crate::core::{LoadBalancerFactory, ProxyService, RouteRateLimiter};
 use crate::ports::file_system::FileSystem;
 use crate::ports::http_client::{HttpClient, HttpClientError};
 use crate::ports::http_server::{HandlerError, HttpHandler};
@@ -18,6 +22,7 @@ pub struct HyperHandler {
     proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>,
     http_client: Arc<HyperHttpClient>,
     file_system: Arc<TowerFileSystem>,
+    rate_limiters: Arc<Mutex<HashMap<String, Arc<RouteRateLimiter>>>>,
 }
 
 impl HyperHandler {
@@ -30,6 +35,7 @@ impl HyperHandler {
             proxy_service_holder,
             http_client,
             file_system,
+            rate_limiters: Arc::new(Mutex::new(HashMap::new())), // Initialize here
         }
     }
 
@@ -260,6 +266,37 @@ impl HyperHandler {
             }
         }
     }
+
+    async fn get_or_create_rate_limiter(
+        &self,
+        route_path: &str,
+        config: &RateLimitConfig,
+    ) -> Result<Arc<RouteRateLimiter>, AxumResponse> {
+        let mut limiters = self.rate_limiters.lock().await;
+        if let Some(limiter) = limiters.get(route_path) {
+            return Ok(limiter.clone());
+        }
+
+        match RouteRateLimiter::new(config) {
+            Ok(limiter) => {
+                let arc_limiter = Arc::new(limiter);
+                limiters.insert(route_path.to_string(), arc_limiter.clone());
+                Ok(arc_limiter)
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to create rate limiter for path '{}': {}",
+                    route_path,
+                    e
+                );
+                Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to configure rate limiter: {}", e),
+                )
+                    .into_response())
+            }
+        }
+    }
 }
 
 impl HttpHandler for HyperHandler {
@@ -272,44 +309,76 @@ impl HttpHandler for HyperHandler {
 
         // Get current ProxyService snapshot for routing
         let current_proxy_service = self.proxy_service_holder.read().unwrap().clone();
-        let matched_route = current_proxy_service.find_matching_route(path);
+        let matched_route_opt = current_proxy_service.find_matching_route(path);
 
-        let axum_response: AxumResponse = match matched_route {
-            Some((prefix, route_config)) => match route_config {
-                RouteConfig::Static { root } => self.handle_static(&root, &prefix, req).await,
-                RouteConfig::Redirect {
-                    target,
-                    status_code,
-                } => {
-                    self.handle_redirect(&target, path, &prefix, status_code)
+        let axum_response: AxumResponse = match matched_route_opt {
+            Some((prefix, route_config)) => {
+                // Rate Limiting Check
+                let rate_limit_config_opt = match &route_config {
+                    RouteConfig::Static { rate_limit, .. } => rate_limit.as_ref(),
+                    RouteConfig::Redirect { rate_limit, .. } => rate_limit.as_ref(),
+                    RouteConfig::Proxy { rate_limit, .. } => rate_limit.as_ref(),
+                    RouteConfig::LoadBalance { rate_limit, .. } => rate_limit.as_ref(),
+                };
+
+                if let Some(rl_config) = rate_limit_config_opt {
+                    // Use the route prefix as the key for the limiter
+                    match self.get_or_create_rate_limiter(&prefix, rl_config).await {
+                        Ok(limiter) => {
+                            // Extract ConnectInfo for IP-based rate limiting
+                            let client_addr_info =
+                                req.extensions().get::<ConnectInfo<SocketAddr>>();
+
+                            if let Err(boxed_response) = limiter.check(&req, client_addr_info) {
+                                return Ok(*boxed_response); // Return rate limited response, dereferencing the Box
+                            }
+                        }
+                        Err(response) => return Ok(response), // Error creating limiter - this response is not boxed
+                    }
+                }
+
+                // Proceed with handling after rate limit check
+                match route_config {
+                    RouteConfig::Static { root, .. } => {
+                        self.handle_static(&root, &prefix, req).await
+                    }
+                    RouteConfig::Redirect {
+                        target,
+                        status_code,
+                        ..
+                    } => {
+                        self.handle_redirect(&target, path, &prefix, status_code)
+                            .await
+                    }
+                    RouteConfig::Proxy {
+                        target,
+                        path_rewrite,
+                        ..
+                    } => {
+                        tracing::debug!(target = %target, path = %path, prefix = %prefix, path_rewrite = ?path_rewrite, "Entering handle_proxy in http_handler.rs");
+                        let response = self
+                            .handle_proxy(&target, req, &prefix, path_rewrite.as_deref())
+                            .await;
+                        tracing::debug!(status = ?response.status(), headers = ?response.headers(), "Exiting handle_proxy in http_handler.rs, response prepared.");
+                        response
+                    }
+                    RouteConfig::LoadBalance {
+                        targets,
+                        strategy,
+                        path_rewrite,
+                        ..
+                    } => {
+                        self.handle_load_balance(
+                            &targets,
+                            &strategy,
+                            req,
+                            &prefix,
+                            path_rewrite.as_deref(),
+                        )
                         .await
+                    }
                 }
-                RouteConfig::Proxy {
-                    target,
-                    path_rewrite,
-                } => {
-                    tracing::debug!(target = %target, path = %path, prefix = %prefix, path_rewrite = ?path_rewrite, "Entering handle_proxy in http_handler.rs");
-                    let response = self
-                        .handle_proxy(&target, req, &prefix, path_rewrite.as_deref())
-                        .await;
-                    tracing::debug!(status = ?response.status(), headers = ?response.headers(), "Exiting handle_proxy in http_handler.rs, response prepared.");
-                    response
-                }
-                RouteConfig::LoadBalance {
-                    targets,
-                    strategy,
-                    path_rewrite,
-                } => {
-                    self.handle_load_balance(
-                        &targets,
-                        &strategy,
-                        req,
-                        &prefix,
-                        path_rewrite.as_deref(),
-                    )
-                    .await
-                }
-            },
+            }
             None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
         };
 
