@@ -50,7 +50,7 @@ use crate::ports::http_server::{HandlerError, HttpHandler};
 // NEW: Struct to hold arguments for proxy/load_balance handlers
 struct ProxyHandlerArgs<'a> {
     target: Option<&'a String>,
-    targets: Option<&'a Vec<String>>, 
+    targets: Option<&'a Vec<String>>,
     strategy: Option<&'a LoadBalanceStrategy>,
     req: Request<AxumBody>,
     prefix: &'a str,

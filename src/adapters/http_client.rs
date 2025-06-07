@@ -2,7 +2,7 @@ use axum::body::Body as AxumBody;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming as HyperBodyIncoming;
-use hyper::{Request, Response, header, Version, header::HeaderValue};
+use hyper::{Request, Response, Version, header, header::HeaderValue};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
@@ -146,33 +146,47 @@ impl HttpClient for HyperHttpClient {
                 HeaderValue::from_str(&format!("{}:{}", host_str, port.as_u16()))
                     .unwrap_or_else(|_| HeaderValue::from_static(""))
             } else {
-                HeaderValue::from_str(host_str)
-                    .unwrap_or_else(|_| HeaderValue::from_static(""))
+                HeaderValue::from_str(host_str).unwrap_or_else(|_| HeaderValue::from_static(""))
             };
-            if host_header_val != "" { 
-                req.headers_mut().insert(hyper::header::HOST, host_header_val);
+            if !host_header_val.is_empty() {
+                req.headers_mut()
+                    .insert(hyper::header::HOST, host_header_val);
             }
         } else {
             tracing::error!("Outgoing URI has no host: {}", req.uri());
-            return Err(HyperClientError::RequestError("Outgoing URI has no host".to_string()).into());
+            return Err(
+                HyperClientError::RequestError("Outgoing URI has no host".to_string()).into(),
+            );
         }
 
         let (mut parts, axum_body) = req.into_parts();
         parts.version = Version::HTTP_11;
 
-        tracing::info!("Sending request: {} {} (Version set to HTTP/1.1 for upstream, ALPN negotiates)", parts.method, parts.uri);
+        tracing::info!(
+            "Sending request: {} {} (Version set to HTTP/1.1 for upstream, ALPN negotiates)",
+            parts.method,
+            parts.uri
+        );
         tracing::debug!("Outgoing request headers: {:?}", parts.headers);
 
         let bytes = match axum_body.collect().await {
             Ok(collected) => collected.to_bytes(),
             Err(e) => {
-                tracing::error!("Failed to collect request body for {} {}: {}", parts.method, parts.uri, e);
-                return Err(HttpClientError::ConnectionError(format!("Failed to collect request body: {}", e)));
+                tracing::error!(
+                    "Failed to collect request body for {} {}: {}",
+                    parts.method,
+                    parts.uri,
+                    e
+                );
+                return Err(HttpClientError::ConnectionError(format!(
+                    "Failed to collect request body: {}",
+                    e
+                )));
             }
         };
         let body = Full::new(bytes);
         let outgoing_hyper_request = Request::from_parts(parts, body);
-        
+
         let method_for_error_log = outgoing_hyper_request.method().clone();
         let uri_for_error_log = outgoing_hyper_request.uri().clone();
 
@@ -182,9 +196,9 @@ impl HttpClient for HyperHttpClient {
                 Err(e) => {
                     // Simplified error logging as e.source() is not directly available for hyper_util::client::legacy::Error
                     tracing::error!(
-                        "Error making request to {} {}: {}", 
-                        method_for_error_log, 
-                        uri_for_error_log, 
+                        "Error making request to {} {}: {}",
+                        method_for_error_log,
+                        uri_for_error_log,
                         e
                     );
                     return Err(HyperClientError::RequestError(format!(
@@ -198,17 +212,15 @@ impl HttpClient for HyperHttpClient {
         let status = response.status();
         if status.is_client_error() || status.is_server_error() {
             tracing::warn!(
-                "Request to {} {} failed with status: {}", 
-                method_for_error_log, 
-                uri_for_error_log,    
+                "Request to {} {} failed with status: {}",
+                method_for_error_log,
+                uri_for_error_log,
                 status
             );
         }
 
         let (response_parts, hyper_body) = response.into_parts();
-        let axum_body_response = AxumBody::new(hyper_body.map_err(|e| {
-            axum::BoxError::from(e)
-        }));
+        let axum_body_response = AxumBody::new(hyper_body.map_err(axum::BoxError::from));
 
         Ok(Response::from_parts(response_parts, axum_body_response))
     }
@@ -219,11 +231,11 @@ impl HttpClient for HyperHttpClient {
         let request = Request::builder()
             .method("HEAD")
             .uri(url)
-            .version(Version::HTTP_11) 
+            .version(Version::HTTP_11)
             .body(Full::new(Bytes::new()))
-            .map_err(|e| HyperClientError::InvalidRequest(e))?;
+            .map_err(HyperClientError::InvalidRequest)?;
 
-        tracing::debug!("Health checking URL: {} (Version set to HTTP/1.1)", url); 
+        tracing::debug!("Health checking URL: {} (Version set to HTTP/1.1)", url);
         let timeout_duration = Duration::from_secs(timeout_secs);
 
         match timeout(timeout_duration, client.request(request)).await {

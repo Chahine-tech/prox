@@ -177,23 +177,22 @@ impl HttpServer for HyperServer {
 
         tracing::info!("Server listening on {}", addr);
 
-        if let Some(tls_config_data) = tls_config_opt_owned { // Use the owned Option
+        if let Some(tls_config_data) = tls_config_opt_owned {
+            // Use the owned Option
             tracing::info!(
                 "TLS is ENABLED. Certificate: {}, Key: {}",
                 tls_config_data.cert_path,
                 tls_config_data.key_path
             );
-            let rustls_config = RustlsConfig::from_pem_file(
-                &tls_config_data.cert_path,
-                &tls_config_data.key_path,
-            )
-            .await // This await is now safe
-            .with_context(|| {
-                format!(
-                    "Failed to load TLS certificate/key from paths: cert='{}', key='{}'",
-                    tls_config_data.cert_path, tls_config_data.key_path
-                )
-            })?;
+            let rustls_config =
+                RustlsConfig::from_pem_file(&tls_config_data.cert_path, &tls_config_data.key_path)
+                    .await // This await is now safe
+                    .with_context(|| {
+                        format!(
+                            "Failed to load TLS certificate/key from paths: cert='{}', key='{}'",
+                            tls_config_data.cert_path, tls_config_data.key_path
+                        )
+                    })?;
             axum_server::bind_rustls(addr, rustls_config)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .await // This await is now safe
