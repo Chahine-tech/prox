@@ -15,6 +15,8 @@ Prox is a lightweight reverse proxy built in Rust, implementing a hexagonal arch
 - Custom error handling with type safety
 - Browser-like request headers for improved compatibility
 
+👉 **See also:** [Value-Adding Ideas and Implementation Status](docs/REVERSE_PROXY_VALUE_ADDITIONS.md)
+
 ## Architecture
 
 Prox follows a hexagonal architecture pattern, which separates the application into three main areas:

@@ -6,16 +6,62 @@ use anyhow::Result;
 use axum::body::Body as AxumBody;
 use axum::extract::ConnectInfo;
 use axum::response::{IntoResponse, Response as AxumResponse};
-use hyper::{Request, Response, StatusCode};
-use std::net::SocketAddr;
+use chrono::Utc; // Import Utc for timestamp
+use http_body_util::BodyExt; // Import BodyExt for .collect()
+use hyper::{
+    Request, Response, StatusCode,
+    header::{HeaderName, HeaderValue},
+};
+use regex::Regex;
+use serde_json;
+use std::net::SocketAddr; // Import Regex
+
+// NEW: Struct to hold request data for condition checking
+#[derive(Clone, Debug)] // Should be Send + Sync implicitly as it owns its data
+struct RequestConditionContext {
+    uri_path: String,
+    method: hyper::Method,
+    headers: hyper::HeaderMap,
+    // client_ip: Option<SocketAddr>, // Add if client IP is needed for conditions
+}
+
+impl RequestConditionContext {
+    fn from_request(req: &Request<AxumBody>) -> Self {
+        // Note: Cloning headers and method is relatively cheap.
+        // URI path is already a String via .path().to_string().
+        Self {
+            uri_path: req.uri().path().to_string(),
+            method: req.method().clone(),
+            headers: req.headers().clone(),
+        }
+    }
+}
 
 use crate::adapters::file_system::TowerFileSystem;
 use crate::adapters::http_client::HyperHttpClient;
-use crate::config::{LoadBalanceStrategy, RateLimitConfig, RouteConfig};
+use crate::config::{
+    BodyActions, HeaderActions, LoadBalanceStrategy, RateLimitConfig, RequestCondition, RouteConfig,
+}; // Removed HeaderCondition
 use crate::core::{LoadBalancerFactory, ProxyService, RouteRateLimiter};
 use crate::ports::file_system::FileSystem;
 use crate::ports::http_client::{HttpClient, HttpClientError};
 use crate::ports::http_server::{HandlerError, HttpHandler};
+
+// NEW: Struct to hold arguments for proxy/load_balance handlers
+struct ProxyHandlerArgs<'a> {
+    target: Option<&'a String>,
+    targets: Option<&'a Vec<String>>, 
+    strategy: Option<&'a LoadBalanceStrategy>,
+    req: Request<AxumBody>,
+    prefix: &'a str,
+    path_rewrite: Option<&'a str>,
+    request_headers_actions: Option<&'a HeaderActions>,
+    response_headers_actions: Option<&'a HeaderActions>,
+    request_body_actions: Option<&'a BodyActions>,
+    response_body_actions: Option<&'a BodyActions>,
+    client_ip: Option<SocketAddr>,
+    initial_req_ctx: &'a RequestConditionContext,
+}
 
 #[derive(Clone)]
 pub struct HyperHandler {
@@ -122,29 +168,311 @@ impl HyperHandler {
             })
     }
 
-    async fn handle_proxy(
-        &self,
-        target: &str,
-        mut req: Request<AxumBody>,
-        prefix: &str,
-        path_rewrite: Option<&str>,
-    ) -> AxumResponse {
-        let original_path = req.uri().path().to_string(); // Keep as String for lifetime reasons if needed by helper
-        let query = req
-            .uri()
-            .query()
-            .map_or("".to_string(), |q| format!("?{}", q));
+    // UPDATED: check_condition now takes RequestConditionContext
+    fn check_condition(ctx: &RequestConditionContext, condition_config: &RequestCondition) -> bool {
+        if let Some(path_regex_str) = &condition_config.path_matches {
+            if let Ok(regex) = Regex::new(path_regex_str) {
+                if !regex.is_match(&ctx.uri_path) {
+                    tracing::debug!(
+                        "Condition failed: path '{}' does not match regex '{}'",
+                        ctx.uri_path,
+                        path_regex_str
+                    );
+                    return false;
+                }
+            } else {
+                tracing::warn!("Invalid regex for path_matches: {}", path_regex_str);
+                return false; // Treat invalid regex as a failed condition
+            }
+        }
 
-        let final_path = Self::compute_final_path(&original_path, prefix, path_rewrite);
+        if let Some(method_str) = &condition_config.method_is {
+            if ctx.method.as_str() != method_str.to_uppercase() {
+                tracing::debug!(
+                    "Condition failed: method '{}' does not match '{}'",
+                    ctx.method,
+                    method_str.to_uppercase()
+                );
+                return false;
+            }
+        }
+
+        if let Some(header_cond) = &condition_config.has_header {
+            if let Some(header_value) = ctx.headers.get(&header_cond.name) {
+                if let Some(value_regex_str) = &header_cond.value_matches {
+                    if let Ok(header_value_str) = header_value.to_str() {
+                        if let Ok(regex) = Regex::new(value_regex_str) {
+                            if !regex.is_match(header_value_str) {
+                                tracing::debug!(
+                                    "Condition failed: header '{}' value '{}' does not match regex '{}'",
+                                    header_cond.name,
+                                    header_value_str,
+                                    value_regex_str
+                                );
+                                return false;
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Invalid regex for header value_matches: {}",
+                                value_regex_str
+                            );
+                            return false;
+                        }
+                    } else {
+                        tracing::debug!(
+                            "Condition failed: header '{}' value is not valid UTF-8",
+                            header_cond.name
+                        );
+                        return false; // Header value not valid UTF-8
+                    }
+                } // If no value_matches, presence of header is enough and we're good here.
+            } else {
+                tracing::debug!("Condition failed: header '{}' not found", header_cond.name);
+                return false; // Header not found
+            }
+        }
+        tracing::debug!("All conditions met.");
+        true // All conditions met or no conditions specified
+    }
+
+    // UPDATED: apply_header_actions
+    fn apply_header_actions(
+        headers_to_modify: &mut hyper::HeaderMap,
+        actions_config_opt: Option<&HeaderActions>,
+        client_ip: Option<SocketAddr>,
+        // For request headers, this context is built from the req just before this call.
+        // For response headers, this context is built from the *initial* client request.
+        condition_check_ctx: Option<&RequestConditionContext>,
+    ) {
+        if let Some(actions_config) = actions_config_opt {
+            if let Some(condition) = &actions_config.condition {
+                if let Some(ctx) = condition_check_ctx {
+                    if !Self::check_condition(ctx, condition) {
+                        return; // Condition not met, skip actions
+                    }
+                } else {
+                    // If a condition is specified, a context must be provided.
+                    // This case should ideally be avoided by ensuring context is always passed if condition exists.
+                    tracing::warn!(
+                        "Condition specified for header actions, but no context provided for check. Skipping actions."
+                    );
+                    return;
+                }
+            }
+
+            // Proceed with actions if no condition or condition met
+            for name in &actions_config.remove {
+                if let Ok(header_name) = HeaderName::from_bytes(name.as_bytes()) {
+                    headers_to_modify.remove(header_name);
+                }
+            }
+            for (name, value_template) in &actions_config.add {
+                if let Ok(header_name) = HeaderName::from_bytes(name.as_bytes()) {
+                    let value_str = match value_template.as_str() {
+                        "{client_ip}" => {
+                            client_ip.map(|ip| ip.ip().to_string()).unwrap_or_default()
+                        }
+                        "{timestamp}" => Utc::now().to_rfc3339(),
+                        // Add other custom values here
+                        _ => value_template.clone(),
+                    };
+                    if let Ok(header_value) = HeaderValue::from_str(&value_str) {
+                        headers_to_modify.insert(header_name, header_value);
+                    }
+                }
+            }
+        }
+    }
+
+    // UPDATED: apply_body_actions_to_request
+    async fn apply_body_actions_to_request(
+        req: &mut Request<AxumBody>, // Still takes &mut Request to modify it
+        actions_config_opt: Option<&BodyActions>,
+    ) -> Result<(), HandlerError> {
+        if let Some(actions_config) = actions_config_opt {
+            if let Some(condition) = &actions_config.condition {
+                // Create context from `req` *before* any potential body modification for condition checking.
+                // This context is temporary and local to this function call.
+                let ctx = RequestConditionContext::from_request(req);
+                if !Self::check_condition(&ctx, condition) {
+                    return Ok(()); // Condition not met, skip actions
+                }
+            }
+
+            if let Some(text_content) = &actions_config.set_text {
+                *req.body_mut() = AxumBody::from(text_content.clone());
+                req.headers_mut().remove(hyper::header::CONTENT_TYPE);
+                req.headers_mut().remove(hyper::header::CONTENT_LENGTH);
+                req.headers_mut().insert(
+                    hyper::header::CONTENT_LENGTH,
+                    HeaderValue::from(text_content.len()),
+                );
+            } else if let Some(json_content) = &actions_config.set_json {
+                match serde_json::to_string(json_content) {
+                    Ok(json_str) => {
+                        *req.body_mut() = AxumBody::from(json_str.clone());
+                        req.headers_mut().insert(
+                            hyper::header::CONTENT_TYPE,
+                            HeaderValue::from_static("application/json"),
+                        );
+                        req.headers_mut().insert(
+                            hyper::header::CONTENT_LENGTH,
+                            HeaderValue::from(json_str.len()),
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to serialize JSON for request body: {}", e);
+                        return Err(HandlerError::InternalError(
+                            "Failed to serialize JSON for request body".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // UPDATED: apply_body_actions_to_response
+    async fn apply_body_actions_to_response(
+        mut response: AxumResponse,
+        actions_config_opt: Option<&BodyActions>,
+        // This context is built from the *initial* client request.
+        condition_check_ctx: Option<&RequestConditionContext>,
+    ) -> Result<AxumResponse, HandlerError> {
+        if let Some(actions_config) = actions_config_opt {
+            if let Some(condition) = &actions_config.condition {
+                if let Some(ctx) = condition_check_ctx {
+                    if !Self::check_condition(ctx, condition) {
+                        return Ok(response); // Condition not met, return original response
+                    }
+                } else {
+                    tracing::warn!(
+                        "Condition specified for body actions on response, but no context provided. Skipping actions."
+                    );
+                    return Ok(response);
+                }
+            }
+
+            let (mut parts, body) = response.into_parts();
+            // Use .collect() from BodyExt to get the body bytes
+            let body_bytes = match body.collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(e) => {
+                    tracing::error!("Failed to read response body: {}", e);
+                    return Err(HandlerError::InternalError(format!(
+                        "Failed to read response body: {}",
+                        e
+                    )));
+                }
+            };
+
+            let mut new_body_bytes = body_bytes.to_vec();
+
+            if let Some(text_content) = &actions_config.set_text {
+                new_body_bytes = text_content.clone().into_bytes();
+                parts.headers.remove(hyper::header::CONTENT_TYPE);
+                parts.headers.remove(hyper::header::CONTENT_LENGTH);
+                parts.headers.insert(
+                    hyper::header::CONTENT_LENGTH,
+                    HeaderValue::from(new_body_bytes.len()),
+                );
+            } else if let Some(json_content) = &actions_config.set_json {
+                match serde_json::to_vec(json_content) {
+                    Ok(json_vec) => {
+                        new_body_bytes = json_vec;
+                        parts.headers.insert(
+                            hyper::header::CONTENT_TYPE,
+                            HeaderValue::from_static("application/json"),
+                        );
+                        parts.headers.insert(
+                            hyper::header::CONTENT_LENGTH,
+                            HeaderValue::from(new_body_bytes.len()),
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to serialize JSON for response body: {}", e);
+                        return Err(HandlerError::InternalError(
+                            "Failed to serialize JSON for response body".to_string(),
+                        ));
+                    }
+                }
+            }
+            response = Response::from_parts(parts, AxumBody::from(new_body_bytes)).into_response();
+        }
+        Ok(response)
+    }
+
+    async fn handle_proxy(&self, args: ProxyHandlerArgs<'_>) -> AxumResponse {
+        let target = args.target.expect("Target is required for handle_proxy");
+        let mut req = args.req; // Make req mutable from args
+        let original_path = req.uri().path().to_string();
+        let query = req.uri().query().map_or("", |q| q).to_string();
+
+        // For request_headers, create a context from the current state of `req`
+        let current_req_ctx_for_req_headers = RequestConditionContext::from_request(&req);
+        Self::apply_header_actions(
+            req.headers_mut(),
+            args.request_headers_actions,
+            args.client_ip,
+            Some(&current_req_ctx_for_req_headers),
+        );
+
+        // apply_body_actions_to_request creates its own context from `req` before modification
+        if let Err(e) =
+            Self::apply_body_actions_to_request(&mut req, args.request_body_actions).await
+        {
+            // Convert HandlerError to AxumResponse
+            return match e {
+                HandlerError::InternalError(msg) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+                }
+                // Add other HandlerError variants as needed
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "An unexpected error occurred",
+                )
+                    .into_response(),
+            };
+        }
+
+        let final_path = Self::compute_final_path(&original_path, args.prefix, args.path_rewrite);
 
         let target_uri_string = format!("{}{}{}", target.trim_end_matches('/'), final_path, query);
 
         match target_uri_string.parse::<hyper::Uri>() {
             Ok(uri) => {
                 *req.uri_mut() = uri;
-                // Use send_request as defined in the HttpClient trait
                 match self.http_client.send_request(req).await {
-                    Ok(response) => response.map(AxumBody::new),
+                    Ok(response) => {
+                        let mut axum_resp = response.map(AxumBody::new);
+                        // For response_headers, use the initial_req_ctx
+                        Self::apply_header_actions(
+                            axum_resp.headers_mut(),
+                            args.response_headers_actions,
+                            args.client_ip,
+                            Some(args.initial_req_ctx),
+                        );
+                        // For response_body, use the initial_req_ctx
+                        match Self::apply_body_actions_to_response(
+                            axum_resp,
+                            args.response_body_actions,
+                            Some(args.initial_req_ctx),
+                        )
+                        .await
+                        {
+                            Ok(resp_with_body_actions) => resp_with_body_actions,
+                            Err(e) => match e {
+                                HandlerError::InternalError(msg) => {
+                                    (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+                                }
+                                _ => (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "An unexpected error occurred",
+                                )
+                                    .into_response(),
+                            },
+                        }
+                    }
                     Err(e) => {
                         tracing::error!("Proxy request failed: {}", e);
                         // Map HttpClientError to an appropriate AxumResponse
@@ -175,51 +503,71 @@ impl HyperHandler {
         }
     }
 
-    async fn handle_load_balance(
-        &self,
-        targets: &[String],
-        strategy: &LoadBalanceStrategy,
-        mut req: Request<AxumBody>,
-        prefix: &str,
-        path_rewrite: Option<&str>,
-    ) -> AxumResponse {
+    async fn handle_load_balance(&self, args: ProxyHandlerArgs<'_>) -> AxumResponse {
+        let targets = args
+            .targets
+            .expect("Targets are required for handle_load_balance");
+        let strategy = args
+            .strategy
+            .expect("Strategy is required for handle_load_balance");
+        let mut req = args.req; // Make req mutable from args
+
         if targets.is_empty() {
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(AxumBody::from("No targets configured for load balancing"))
-                .unwrap();
+            return (StatusCode::INTERNAL_SERVER_ERROR, "No targets available").into_response();
         }
 
-        // Get current ProxyService snapshot to access health data
         let current_proxy_service = self.proxy_service_holder.read().unwrap().clone();
         let healthy_targets = current_proxy_service.get_healthy_backends(targets);
 
         if healthy_targets.is_empty() {
-            return Response::builder()
-                .status(StatusCode::SERVICE_UNAVAILABLE)
-                .body(AxumBody::from("No healthy backends available"))
-                .unwrap();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "No healthy targets available",
+            )
+                .into_response();
         }
 
         let lb_strategy = LoadBalancerFactory::create_strategy(strategy);
         let selected_target = match lb_strategy.select_target(&healthy_targets) {
             Some(t) => t,
             None => {
-                // This case should ideally not be reached if healthy_targets is not empty
-                return Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(AxumBody::from("Load balancer failed to select a target"))
-                    .unwrap();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to select a target",
+                )
+                    .into_response();
             }
         };
 
-        let original_path = req.uri().path().to_string(); // Keep as String for lifetime reasons if needed by helper
-        let query = req
-            .uri()
-            .query()
-            .map_or("".to_string(), |q| format!("?{}", q));
+        // For request_headers, create a context from the current state of `req`
+        let current_req_ctx_for_req_headers = RequestConditionContext::from_request(&req);
+        Self::apply_header_actions(
+            req.headers_mut(),
+            args.request_headers_actions,
+            args.client_ip,
+            Some(&current_req_ctx_for_req_headers),
+        );
 
-        let final_path = Self::compute_final_path(&original_path, prefix, path_rewrite);
+        // apply_body_actions_to_request creates its own context from `req` before modification
+        if let Err(e) =
+            Self::apply_body_actions_to_request(&mut req, args.request_body_actions).await
+        {
+            return match e {
+                HandlerError::InternalError(msg) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+                }
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "An unexpected error occurred",
+                )
+                    .into_response(),
+            };
+        }
+
+        let original_path = req.uri().path().to_string();
+        let query = req.uri().query().map_or("", |q| q).to_string(); // Store query as String
+
+        let final_path = Self::compute_final_path(&original_path, args.prefix, args.path_rewrite);
 
         let target_uri_string = format!(
             "{}{}{}",
@@ -231,9 +579,37 @@ impl HyperHandler {
         match target_uri_string.parse::<hyper::Uri>() {
             Ok(uri) => {
                 *req.uri_mut() = uri;
-                // Use send_request as defined in the HttpClient trait
                 match self.http_client.send_request(req).await {
-                    Ok(response) => response.map(AxumBody::new),
+                    Ok(response) => {
+                        let mut axum_resp = response.map(AxumBody::new);
+                        // For response_headers, use the initial_req_ctx
+                        Self::apply_header_actions(
+                            axum_resp.headers_mut(),
+                            args.response_headers_actions,
+                            args.client_ip,
+                            Some(args.initial_req_ctx),
+                        );
+                        // For response_body, use the initial_req_ctx
+                        match Self::apply_body_actions_to_response(
+                            axum_resp,
+                            args.response_body_actions,
+                            Some(args.initial_req_ctx),
+                        )
+                        .await
+                        {
+                            Ok(resp_with_body_actions) => resp_with_body_actions,
+                            Err(e) => match e {
+                                HandlerError::InternalError(msg) => {
+                                    (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+                                }
+                                _ => (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "An unexpected error occurred",
+                                )
+                                    .into_response(),
+                            },
+                        }
+                    }
                     Err(e) => {
                         tracing::error!("Load balanced request failed: {}", e);
                         // Map HttpClientError to an appropriate AxumResponse
@@ -302,80 +678,142 @@ impl HyperHandler {
 impl HttpHandler for HyperHandler {
     async fn handle_request(
         &self,
-        req: Request<AxumBody>,
+        mut req: Request<AxumBody>, // Made req mutable here
     ) -> Result<Response<AxumBody>, HandlerError> {
-        let uri = req.uri().clone();
-        let path = uri.path();
+        let client_ip_info = req.extensions().get::<ConnectInfo<SocketAddr>>().cloned();
+        let client_ip = client_ip_info.as_ref().map(|ci| ci.0);
+        // let uri = req.uri().clone(); // Not strictly needed here if using initial_req_ctx
+        // let path = uri.path(); // Not strictly needed here if using initial_req_ctx
 
-        // Get current ProxyService snapshot for routing
+        // Create the context from the *initial* request. This is cheap.
+        let initial_req_ctx = RequestConditionContext::from_request(&req);
+
         let current_proxy_service = self.proxy_service_holder.read().unwrap().clone();
-        let matched_route_opt = current_proxy_service.find_matching_route(path);
+        // Use initial_req_ctx.uri_path for finding the route
+        let matched_route_opt =
+            current_proxy_service.find_matching_route(&initial_req_ctx.uri_path);
 
         let axum_response: AxumResponse = match matched_route_opt {
-            Some((prefix, route_config)) => {
-                // Rate Limiting Check
-                let rate_limit_config_opt = match &route_config {
+            Some((prefix_str, route_config)) => {
+                // Rate Limiting (if configured) - This part remains largely the same
+                let maybe_rate_limit_config = match &route_config {
                     RouteConfig::Static { rate_limit, .. } => rate_limit.as_ref(),
                     RouteConfig::Redirect { rate_limit, .. } => rate_limit.as_ref(),
                     RouteConfig::Proxy { rate_limit, .. } => rate_limit.as_ref(),
                     RouteConfig::LoadBalance { rate_limit, .. } => rate_limit.as_ref(),
                 };
 
-                if let Some(rl_config) = rate_limit_config_opt {
-                    // Use the route prefix as the key for the limiter
-                    match self.get_or_create_rate_limiter(&prefix, rl_config).await {
+                if let Some(rate_limit_config) = maybe_rate_limit_config {
+                    match self
+                        .get_or_create_rate_limiter(&prefix_str, rate_limit_config)
+                        .await
+                    {
                         Ok(limiter) => {
-                            // Extract ConnectInfo for IP-based rate limiting
-                            let client_addr_info =
-                                req.extensions().get::<ConnectInfo<SocketAddr>>();
+                            // The `check` method on RouteRateLimiter expects the request and connect_info
+                            // We pass a reference to the original request's parts for header checking etc.
+                            // and the cloned ConnectInfo.
+                            // We need to temporarily take ownership of `req` to pass to `limiter.check`
+                            // then put it back if not rate limited.
+                            let (parts, body) = req.into_parts();
+                            // temp_req_for_check needs headers, method, uri from `parts`
+                            // and client_ip_info for the check method.
+                            // The `check` method in RouteRateLimiter might need to be adapted or
+                            // we ensure it can work with parts + connect_info.
+                            // For now, assuming it works with a request reconstructed from parts.
+                            let mut temp_req_builder = Request::builder()
+                                .method(parts.method.clone())
+                                .uri(parts.uri.clone())
+                                .version(parts.version);
+                            for (name, value) in &parts.headers {
+                                temp_req_builder = temp_req_builder.header(name, value);
+                            }
+                            // Pass an empty body for the check, actual body is preserved.
+                            let temp_req_for_check =
+                                temp_req_builder.body(AxumBody::empty()).unwrap();
 
-                            if let Err(boxed_response) = limiter.check(&req, client_addr_info) {
-                                return Ok(*boxed_response); // Return rate limited response, dereferencing the Box
+                            match limiter.check(&temp_req_for_check, client_ip_info.as_ref()) {
+                                Ok(_) => {
+                                    // If check passes, reconstruct the original request to proceed
+                                    req = Request::from_parts(parts, body);
+                                }
+                                Err(limit_response_boxed) => {
+                                    return Ok(*limit_response_boxed); // Return the rate limit response
+                                }
                             }
                         }
-                        Err(response) => return Ok(response), // Error creating limiter - this response is not boxed
+                        Err(e) => return Ok(e), // Already an AxumResponse from get_or_create_rate_limiter
                     }
                 }
 
-                // Proceed with handling after rate limit check
                 match route_config {
                     RouteConfig::Static { root, .. } => {
-                        self.handle_static(&root, &prefix, req).await
+                        self.handle_static(&root, &prefix_str, req).await
                     }
                     RouteConfig::Redirect {
                         target,
                         status_code,
                         ..
                     } => {
-                        self.handle_redirect(&target, path, &prefix, status_code)
-                            .await
-                    }
-                    RouteConfig::Proxy {
-                        target,
-                        path_rewrite,
-                        ..
-                    } => {
-                        tracing::debug!(target = %target, path = %path, prefix = %prefix, path_rewrite = ?path_rewrite, "Entering handle_proxy in http_handler.rs");
-                        let response = self
-                            .handle_proxy(&target, req, &prefix, path_rewrite.as_deref())
-                            .await;
-                        tracing::debug!(status = ?response.status(), headers = ?response.headers(), "Exiting handle_proxy in http_handler.rs, response prepared.");
-                        response
-                    }
-                    RouteConfig::LoadBalance {
-                        targets,
-                        strategy,
-                        path_rewrite,
-                        ..
-                    } => {
-                        self.handle_load_balance(
-                            &targets,
-                            &strategy,
-                            req,
-                            &prefix,
-                            path_rewrite.as_deref(),
+                        // handle_redirect uses path from the original URI.
+                        // initial_req_ctx.uri_path can be used here.
+                        self.handle_redirect(
+                            &target,
+                            &initial_req_ctx.uri_path,
+                            &prefix_str,
+                            status_code,
                         )
                         .await
+                    }
+                    RouteConfig::Proxy {
+                        ref target,
+                        path_rewrite,
+                        request_headers,
+                        response_headers,
+                        request_body,
+                        response_body,
+                        ..
+                    } => {
+                        let args = ProxyHandlerArgs {
+                            target: Some(target),
+                            targets: None,
+                            strategy: None,
+                            req, // Original req is moved here
+                            prefix: &prefix_str,
+                            path_rewrite: path_rewrite.as_deref(),
+                            request_headers_actions: request_headers.as_ref(),
+                            response_headers_actions: response_headers.as_ref(),
+                            request_body_actions: request_body.as_ref(),
+                            response_body_actions: response_body.as_ref(),
+                            client_ip,
+                            initial_req_ctx: &initial_req_ctx,
+                        };
+                        self.handle_proxy(args).await
+                    }
+                    RouteConfig::LoadBalance {
+                        ref targets,
+                        ref strategy,
+                        path_rewrite,
+                        request_headers,
+                        response_headers,
+                        request_body,
+                        response_body,
+                        ..
+                    } => {
+                        let args = ProxyHandlerArgs {
+                            target: None,
+                            targets: Some(targets),
+                            strategy: Some(strategy),
+                            req, // Original req is moved here
+                            prefix: &prefix_str,
+                            path_rewrite: path_rewrite.as_deref(),
+                            request_headers_actions: request_headers.as_ref(),
+                            response_headers_actions: response_headers.as_ref(),
+                            request_body_actions: request_body.as_ref(),
+                            response_body_actions: response_body.as_ref(),
+                            client_ip,
+                            initial_req_ctx: &initial_req_ctx,
+                        };
+                        self.handle_load_balance(args).await
                     }
                 }
             }

@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use axum::Json;
 use axum::body::Body as AxumBody;
 use axum::extract::State;
@@ -15,8 +15,6 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use tokio::net::TcpListener;
 use tokio::sync::Mutex as TokioMutex;
 use tower_http::trace::TraceLayer;
 
@@ -161,60 +159,51 @@ async fn update_config_handler(
 impl HttpServer for HyperServer {
     async fn run(&self) -> Result<()> {
         let app = self.build_app().await;
-        let current_config = self.app_state.config_holder.read().unwrap().clone();
 
-        let addr: SocketAddr = current_config
-            .listen_addr
-            .parse()
-            .with_context(|| format!("Invalid listen address: {}", current_config.listen_addr))?;
+        // Read values from config_guard and then drop it
+        let (listen_addr_str, tls_config_opt_owned) = {
+            let config_guard = self.app_state.config_holder.read().unwrap();
+            let addr_str = config_guard.listen_addr.clone();
+            let tls_opt = config_guard.tls.clone(); // Clone the Option<TlsConfig>
+            (addr_str, tls_opt)
+        }; // config_guard is dropped here
 
-        if let Some(tls_config) = &current_config.tls {
-            tracing::info!("Starting server with TLS on {}", addr);
-            let cert_path = &tls_config.cert_path;
-            let key_path = &tls_config.key_path;
-            use tokio::fs;
-            let cert_data = fs::read(cert_path)
-                .await
-                .with_context(|| format!("Failed to read certificate file: {}", cert_path))?;
-            let key_data = fs::read(key_path)
-                .await
-                .with_context(|| format!("Failed to read key file: {}", key_path))?;
-            let cert_chain: Vec<CertificateDer<'static>> =
-                rustls_pemfile::certs(&mut cert_data.as_slice())
-                    .collect::<Result<_, _>>()
-                    .context("Failed to parse certificate PEM")?;
-            let key_der: PrivateKeyDer<'static> =
-                rustls_pemfile::private_key(&mut key_data.as_slice())
-                    .with_context(|| format!("Failed to parse private key file: {}", key_path))?
-                    .ok_or_else(|| anyhow!("No private key found in {}", key_path))?;
+        let addr = listen_addr_str.parse::<SocketAddr>().with_context(|| {
+            format!(
+                "Failed to parse listen address: \\\"{}\\\"",
+                listen_addr_str
+            )
+        })?;
 
-            // The crypto provider should be installed once globally, typically in main.rs.
+        tracing::info!("Server listening on {}", addr);
 
-            let server_config = rustls::ServerConfig::builder()
-                .with_no_client_auth()
-                .with_single_cert(cert_chain, key_der)
-                .context("Failed to create TLS server config")?;
-
-            let tls_acceptor = RustlsConfig::from_config(Arc::new(server_config));
-
-            axum_server::bind_rustls(addr, tls_acceptor)
-                .serve(app.into_make_service())
-                .await
-                .map_err(|e| anyhow!("TLS Server error: {}", e))?;
-        } else {
+        if let Some(tls_config_data) = tls_config_opt_owned { // Use the owned Option
             tracing::info!(
-                "Starting server without TLS on {} (with HTTP/2 support)",
-                addr
+                "TLS is ENABLED. Certificate: {}, Key: {}",
+                tls_config_data.cert_path,
+                tls_config_data.key_path
             );
-            let listener = TcpListener::bind(addr)
-                .await
-                .with_context(|| format!("Failed to bind to address: {}", addr))?;
-
-            // Use regular axum server - HTTP/2 will work if the client negotiates it
-            // The client side is already HTTP/2 capable
-            axum::serve(listener, app.into_make_service())
-                .await
-                .map_err(|e| anyhow!("HTTP Server error: {}", e))?;
+            let rustls_config = RustlsConfig::from_pem_file(
+                &tls_config_data.cert_path,
+                &tls_config_data.key_path,
+            )
+            .await // This await is now safe
+            .with_context(|| {
+                format!(
+                    "Failed to load TLS certificate/key from paths: cert='{}', key='{}'",
+                    tls_config_data.cert_path, tls_config_data.key_path
+                )
+            })?;
+            axum_server::bind_rustls(addr, rustls_config)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                .await // This await is now safe
+                .context("Rustls server error")?;
+        } else {
+            tracing::info!("TLS is DISABLED.");
+            axum_server::bind(addr)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                .await // This await is now safe
+                .context("Server error")?;
         }
 
         Ok(())
@@ -252,6 +241,22 @@ async fn handle_request(
                         format!("Request error: {}", err),
                     )
                         .into_response()
+                }
+                HandlerError::InternalError(err) => {
+                    tracing::error!("Internal error: {}", err);
+                    (StatusCode::INTERNAL_SERVER_ERROR, err).into_response()
+                }
+                HandlerError::BadGateway(err) => {
+                    tracing::error!("Bad gateway: {}", err);
+                    (StatusCode::BAD_GATEWAY, err).into_response()
+                }
+                HandlerError::GatewayTimeout(err) => {
+                    tracing::error!("Gateway timeout: {}", err);
+                    (StatusCode::GATEWAY_TIMEOUT, err).into_response()
+                }
+                HandlerError::BadRequest(err) => {
+                    tracing::error!("Bad request: {}", err);
+                    (StatusCode::BAD_REQUEST, err).into_response()
                 }
             };
             Ok(response)

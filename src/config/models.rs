@@ -1,6 +1,47 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct HeaderActions {
+    #[serde(default)]
+    pub add: HashMap<String, String>,
+    #[serde(default)]
+    pub remove: Vec<String>,
+    #[serde(default)]
+    pub condition: Option<RequestCondition>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct BodyActions {
+    #[serde(default)]
+    pub set_text: Option<String>, // Set the entire body to this text
+    #[serde(default)]
+    pub set_json: Option<serde_json::Value>, // Set the entire body to this JSON value
+    #[serde(default)]
+    pub condition: Option<RequestCondition>,
+    // Future enhancements:
+    // pub add_json_fields: HashMap<String, serde_json::Value>,
+    // pub remove_json_fields: Vec<String>,
+    // pub transform_script: Option<String>, // For more complex transformations
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RequestCondition {
+    #[serde(default)]
+    pub path_matches: Option<String>, // Regex to match the request path
+    #[serde(default)]
+    pub method_is: Option<String>, // Exact match for request method (e.g., "GET", "POST")
+    #[serde(default)]
+    pub has_header: Option<HeaderCondition>,
+    // Potentially add more conditions: client_ip_is, query_param_is, etc.
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct HeaderCondition {
+    pub name: String,
+    pub value_matches: Option<String>, // Regex to match header value
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServerConfig {
     pub listen_addr: String,
@@ -182,131 +223,49 @@ fn default_rate_limit_algorithm() -> RateLimitAlgorithm {
 #[serde(rename_all = "snake_case")] // Added: Match snake_case YAML keys (e.g., "load_balance") to PascalCase enum variants (e.g., LoadBalance)
 pub enum RouteConfig {
     Static {
-        root: String,
-        #[serde(default)]
+        // Assuming 'root: String' exists here
+        root: String, // Ensure this field is present
         rate_limit: Option<RateLimitConfig>,
+        // No header manipulation for static routes in this iteration
     },
     Redirect {
-        target: String,
-        status_code: Option<u16>,
-        #[serde(default)]
+        // Assuming 'target: String' and 'status_code: Option<u16>' exist here
+        target: String,           // Ensure this field is present
+        status_code: Option<u16>, // Ensure this field is present
         rate_limit: Option<RateLimitConfig>,
+        // No header or body manipulation for redirect routes
     },
     Proxy {
         target: String,
         path_rewrite: Option<String>,
-        #[serde(default)]
         rate_limit: Option<RateLimitConfig>,
+        #[serde(default)]
+        request_headers: Option<HeaderActions>,
+        #[serde(default)]
+        response_headers: Option<HeaderActions>,
+        #[serde(default)]
+        request_body: Option<BodyActions>,
+        #[serde(default)]
+        response_body: Option<BodyActions>,
     },
     LoadBalance {
         targets: Vec<String>,
         strategy: LoadBalanceStrategy,
         path_rewrite: Option<String>,
-        #[serde(default)]
         rate_limit: Option<RateLimitConfig>,
+        #[serde(default)]
+        request_headers: Option<HeaderActions>,
+        #[serde(default)]
+        response_headers: Option<HeaderActions>,
+        #[serde(default)]
+        request_body: Option<BodyActions>,
+        #[serde(default)]
+        response_body: Option<BodyActions>,
     },
 }
 
-impl RouteConfig {
-    /// Create a static file serving route
-    pub fn static_files(root: impl Into<String>) -> Self {
-        RouteConfig::Static {
-            root: root.into(),
-            rate_limit: None, // Add default rate_limit
-        }
-    }
-
-    /// Create a redirect route
-    pub fn redirect(target: impl Into<String>, status_code: Option<u16>) -> Self {
-        RouteConfig::Redirect {
-            target: target.into(),
-            status_code,
-            rate_limit: None, // Add default rate_limit
-        }
-    }
-
-    /// Create a proxy route
-    pub fn proxy(target: impl Into<String>, path_rewrite: Option<String>) -> Self {
-        RouteConfig::Proxy {
-            target: target.into(),
-            path_rewrite,
-            rate_limit: None, // Add default rate_limit
-        }
-    }
-
-    /// Create a load balancer builder
-    pub fn load_balance() -> LoadBalancerBuilder {
-        LoadBalancerBuilder::default()
-    }
-}
-
-/// Builder for load balanced routes
-#[derive(Default)]
-pub struct LoadBalancerBuilder {
-    targets: Vec<String>,
-    strategy: Option<LoadBalanceStrategy>,
-    path_rewrite: Option<String>,
-    rate_limit: Option<RateLimitConfig>, // Added rate_limit field
-}
-
-impl LoadBalancerBuilder {
-    /// Add a target server for load balancing
-    pub fn target(mut self, target: impl Into<String>) -> Self {
-        self.targets.push(target.into());
-        self
-    }
-
-    /// Add multiple target backends
-    pub fn targets(mut self, targets: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        for target in targets {
-            self.targets.push(target.into());
-        }
-        self
-    }
-
-    /// Set the load balancing strategy to round robin
-    pub fn round_robin(mut self) -> Self {
-        self.strategy = Some(LoadBalanceStrategy::RoundRobin);
-        self
-    }
-
-    /// Set the load balancing strategy to random
-    pub fn random(mut self) -> Self {
-        self.strategy = Some(LoadBalanceStrategy::Random);
-        self
-    }
-
-    /// Set the path rewrite rule
-    pub fn path_rewrite(mut self, path_rewrite: impl Into<String>) -> Self {
-        self.path_rewrite = Some(path_rewrite.into());
-        self
-    }
-
-    /// Set the rate limit configuration
-    pub fn rate_limit(mut self, rate_limit: RateLimitConfig) -> Self {
-        self.rate_limit = Some(rate_limit);
-        self
-    }
-
-    /// Build the LoadBalance RouteConfig
-    pub fn build(self) -> Result<RouteConfig, String> {
-        if self.targets.is_empty() {
-            return Err("At least one target must be specified for load balancing".to_string());
-        }
-        let strategy = self
-            .strategy
-            .ok_or_else(|| "Load balancing strategy must be specified".to_string())?;
-
-        Ok(RouteConfig::LoadBalance {
-            targets: self.targets,
-            strategy,
-            path_rewrite: self.path_rewrite,
-            rate_limit: self.rate_limit, // Ensure rate_limit is passed
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum LoadBalanceStrategy {
     #[serde(rename = "round_robin")]
     RoundRobin,
