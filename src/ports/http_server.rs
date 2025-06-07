@@ -10,6 +10,14 @@ pub enum HandlerError {
     /// Error when handling a request
     #[error("Request handling error: {0}")]
     RequestError(String),
+    #[error("Internal server error: {0}")]
+    InternalError(String),
+    #[error("Bad gateway: {0}")]
+    BadGateway(String),
+    #[error("Gateway timeout: {0}")]
+    GatewayTimeout(String),
+    #[error("Bad request: {0}")]
+    BadRequest(String),
 }
 
 /// HttpServer defines the port (interface) for handling HTTP requests

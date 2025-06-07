@@ -2,7 +2,7 @@ use axum::body::Body as AxumBody;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming as HyperBodyIncoming;
-use hyper::{Request, Response, header};
+use hyper::{Request, Response, Version, header, header::HeaderValue};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
@@ -140,45 +140,44 @@ impl HttpClient for HyperHttpClient {
         Self::add_common_headers(&mut req);
 
         let client = self.client.clone();
-        let method = req.method().clone();
-        let uri = req.uri().clone();
-        let uri_string = uri.to_string();
 
-        // Ensure the Host header is set correctly for the outgoing request
-        if let Some(host_str) = uri.host() {
-            // Include port if present in the original URI authority
-            let host_val = if let Some(port) = uri.port() {
-                format!("{}:{}", host_str, port)
+        if let Some(host_str) = req.uri().host() {
+            let host_header_val = if let Some(port) = req.uri().port() {
+                HeaderValue::from_str(&format!("{}:{}", host_str, port.as_u16()))
+                    .unwrap_or_else(|_| HeaderValue::from_static(""))
             } else {
-                host_str.to_string()
+                HeaderValue::from_str(host_str).unwrap_or_else(|_| HeaderValue::from_static(""))
             };
-            match header::HeaderValue::from_str(&host_val) {
-                Ok(host_header_val) => {
-                    req.headers_mut().insert(header::HOST, host_header_val);
-                }
-                Err(e) => {
-                    tracing::error!("Invalid host string for Host header '{}': {}", host_val, e);
-                    return Err(HttpClientError::InvalidRequestError(format!(
-                        "Invalid host string for Host header '{}': {}",
-                        host_val, e
-                    )));
-                }
+            if !host_header_val.is_empty() {
+                req.headers_mut()
+                    .insert(hyper::header::HOST, host_header_val);
             }
         } else {
-            tracing::warn!(
-                "Request URI {} has no host, cannot set Host header explicitly",
-                uri
+            tracing::error!("Outgoing URI has no host: {}", req.uri());
+            return Err(
+                HyperClientError::RequestError("Outgoing URI has no host".to_string()).into(),
             );
         }
 
-        tracing::info!("Sending request: {} {} (HTTP/2 enabled)", method, uri);
-        tracing::debug!("Outgoing request headers: {:?}", req.headers());
+        let (mut parts, axum_body) = req.into_parts();
+        parts.version = Version::HTTP_11;
 
-        // Convert AxumBody to hyper_util compatible body
-        let (parts, axum_body) = req.into_parts();
+        tracing::info!(
+            "Sending request: {} {} (Version set to HTTP/1.1 for upstream, ALPN negotiates)",
+            parts.method,
+            parts.uri
+        );
+        tracing::debug!("Outgoing request headers: {:?}", parts.headers);
+
         let bytes = match axum_body.collect().await {
             Ok(collected) => collected.to_bytes(),
             Err(e) => {
+                tracing::error!(
+                    "Failed to collect request body for {} {}: {}",
+                    parts.method,
+                    parts.uri,
+                    e
+                );
                 return Err(HttpClientError::ConnectionError(format!(
                     "Failed to collect request body: {}",
                     e
@@ -186,61 +185,57 @@ impl HttpClient for HyperHttpClient {
             }
         };
         let body = Full::new(bytes);
-        let request = Request::from_parts(parts, body);
+        let outgoing_hyper_request = Request::from_parts(parts, body);
 
-        // Send request with HTTP/2 support
+        let method_for_error_log = outgoing_hyper_request.method().clone();
+        let uri_for_error_log = outgoing_hyper_request.uri().clone();
+
         let response: Response<HyperBodyIncoming> =
-            client.request(request).await.map_err(|err| {
-                // Log the full error chain
-                let mut current_err_opt: Option<&(dyn std::error::Error + 'static)> = Some(&err);
-                let mut err_chain_str = String::new();
-                while let Some(source_err) = current_err_opt {
-                    err_chain_str.push_str(&format!("\\n  Caused by: {}", source_err));
-                    current_err_opt = source_err.source();
+            match client.request(outgoing_hyper_request).await {
+                Ok(res) => res,
+                Err(e) => {
+                    // Simplified error logging as e.source() is not directly available for hyper_util::client::legacy::Error
+                    tracing::error!(
+                        "Error making request to {} {}: {}",
+                        method_for_error_log,
+                        uri_for_error_log,
+                        e
+                    );
+                    return Err(HyperClientError::RequestError(format!(
+                        "{} {}: {}",
+                        method_for_error_log, uri_for_error_log, e
+                    ))
+                    .into());
                 }
-                tracing::error!(
-                    "Error making request to {} {}: {}{}",
-                    method,
-                    uri,
-                    err,
-                    err_chain_str
-                );
-
-                let hyper_err = HyperClientError::RequestError(err.to_string());
-                HttpClientError::from(hyper_err)
-            })?;
+            };
 
         let status = response.status();
         if status.is_client_error() || status.is_server_error() {
-            tracing::warn!("Backend {} returned error status: {}", uri_string, status);
-            return Err(HttpClientError::BackendError {
-                url: uri_string,
-                status,
-            });
+            tracing::warn!(
+                "Request to {} {} failed with status: {}",
+                method_for_error_log,
+                uri_for_error_log,
+                status
+            );
         }
 
-        // Convert hyper::body::Incoming to AxumBody
-        let (parts, hyper_body) = response.into_parts();
-        let axum_body = AxumBody::new(hyper_body.map_err(|e| {
-            tracing::error!("Error transforming response body stream: {}", e);
-            // Ensure the error is compatible with AxumBody's requirements (Into<BoxError>)
-            axum::BoxError::from(e)
-        }));
+        let (response_parts, hyper_body) = response.into_parts();
+        let axum_body_response = AxumBody::new(hyper_body.map_err(axum::BoxError::from));
 
-        Ok(Response::from_parts(parts, axum_body))
+        Ok(Response::from_parts(response_parts, axum_body_response))
     }
 
     async fn health_check(&self, url: &str, timeout_secs: u64) -> HttpClientResult<bool> {
         let client = self.client.clone();
-        let url_str = url.to_string();
 
         let request = Request::builder()
-            .method("GET")
+            .method("HEAD")
             .uri(url)
+            .version(Version::HTTP_11)
             .body(Full::new(Bytes::new()))
-            .map_err(|e| HttpClientError::from(HyperClientError::from(e)))?;
+            .map_err(HyperClientError::InvalidRequest)?;
 
-        tracing::debug!("Health checking URL: {} (HTTP/2 enabled)", url);
+        tracing::debug!("Health checking URL: {} (Version set to HTTP/1.1)", url);
         let timeout_duration = Duration::from_secs(timeout_secs);
 
         match timeout(timeout_duration, client.request(request)).await {
@@ -249,17 +244,17 @@ impl HttpClient for HyperHttpClient {
                     let is_healthy = response.status().is_success();
                     // Consume the body to prevent resource leaks
                     let _ = response.into_body().collect().await;
-                    tracing::debug!("Health check for {} result: {}", url_str, is_healthy);
+                    tracing::debug!("Health check for {} result: {}", url, is_healthy);
                     Ok(is_healthy)
                 }
                 Err(err) => {
-                    tracing::debug!("Health check error for {}: {}", url_str, err);
+                    tracing::debug!("Health check error for {}: {}", url, err);
                     // Return Ok(false) for connection errors during health check, consistent with original logic.
                     Ok(false)
                 }
             },
             Err(_) => {
-                tracing::debug!("Health check timeout for {}", url_str);
+                tracing::debug!("Health check timeout for {}", url);
                 Err(HttpClientError::from(HyperClientError::Timeout(
                     timeout_secs,
                 )))

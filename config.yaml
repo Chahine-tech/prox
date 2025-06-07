@@ -39,9 +39,16 @@ routes:
       by: "ip"
       requests: 10
       period: "1m"
-      # status_code: 429 # Optional: defaults to 429
-      # message: "Too many requests from your IP. Please try again later." # Optional: defaults to "Too Many Requests"
-      # algorithm: "token_bucket" # Optional: defaults to token_bucket
+    request_headers:
+      add:
+        "X-My-Custom-Header": "MyValue"
+        "X-Forwarded-By": "Prox"
+        "X-Real-IP": "{client_ip}"
+      remove: ["User-Agent", "Referer"]
+    response_headers:
+      add:
+        "Server": "Prox"
+      remove: ["X-Powered-By"]
   "/api/v1":
     type: "proxy"
     target: "https://jsonplaceholder.typicode.com" # Assuming this is a placeholder for a real internal service
