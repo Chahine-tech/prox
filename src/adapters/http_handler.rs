@@ -354,7 +354,11 @@ impl HyperHandler {
             } else if let Some(json_content_template) = &actions_config.set_json {
                 // Substitute placeholders in json_content
                 let mut final_json_content = json_content_template.clone();
-                substitute_placeholders_in_json_value(&mut final_json_content, &ctx, &client_ip_str);
+                substitute_placeholders_in_json_value(
+                    &mut final_json_content,
+                    &ctx,
+                    &client_ip_str,
+                );
 
                 match serde_json::to_string(&final_json_content) {
                     Ok(json_str) => {
@@ -404,7 +408,9 @@ impl HyperHandler {
                     }
                 }
                 None => {
-                    tracing::warn!("Condition specified for response body actions, but no context provided for check. Skipping actions.");
+                    tracing::warn!(
+                        "Condition specified for response body actions, but no context provided for check. Skipping actions."
+                    );
                     return Ok(response_to_modify); // No context for condition
                 }
             }
@@ -421,7 +427,9 @@ impl HyperHandler {
         let initial_req_ctx = match initial_req_ctx_opt {
             Some(ctx) => ctx,
             None => {
-                tracing::warn!("Response body actions (set_text/set_json) require context for placeholders, but none provided. Skipping actions.");
+                tracing::warn!(
+                    "Response body actions (set_text/set_json) require context for placeholders, but none provided. Skipping actions."
+                );
                 return Ok(response_to_modify); // No context for placeholders
             }
         };
@@ -478,14 +486,20 @@ impl HyperHandler {
             let collected_body_bytes = match original_body_stream.collect().await {
                 Ok(collected) => collected.to_bytes(),
                 Err(e) => {
-                    tracing::error!("Failed to read original response body when no modification applied: {}", e);
-                    return Err(HandlerError::InternalError(format!("Failed to read response body: {}", e)));
+                    tracing::error!(
+                        "Failed to read original response body when no modification applied: {}",
+                        e
+                    );
+                    return Err(HandlerError::InternalError(format!(
+                        "Failed to read response body: {}",
+                        e
+                    )));
                 }
             };
             final_body_data = collected_body_bytes.to_vec();
             // Content-Type and Content-Length from original `parts` should be preserved if no modification.
         }
-        
+
         Ok(Response::from_parts(parts, AxumBody::from(final_body_data)).into_response())
     }
 
@@ -506,7 +520,8 @@ impl HyperHandler {
 
         // apply_body_actions_to_request creates its own context from `req` before modification
         if let Err(e) =
-            Self::apply_body_actions_to_request(&mut req, args.request_body_actions, args.client_ip).await
+            Self::apply_body_actions_to_request(&mut req, args.request_body_actions, args.client_ip)
+                .await
         {
             // Convert HandlerError to AxumResponse
             return match e {
@@ -638,7 +653,8 @@ impl HyperHandler {
 
         // apply_body_actions_to_request creates its own context from `req` before modification
         if let Err(e) =
-            Self::apply_body_actions_to_request(&mut req, args.request_body_actions, args.client_ip).await
+            Self::apply_body_actions_to_request(&mut req, args.request_body_actions, args.client_ip)
+                .await
         {
             return match e {
                 HandlerError::InternalError(msg) => {
