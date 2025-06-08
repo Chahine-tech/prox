@@ -71,3 +71,35 @@ routes:
       by: "route"
       requests: 100
       period: "1h"
+  "/manipulate": # New route for testing body manipulation
+    type: "proxy"
+    target: "https://httpbin.org" # Target service, httpbin is good for observing requests
+    path_rewrite: "/anything"      # Rewrites /manipulate/* to /anything/*
+    request_headers: # Optional: Add some headers to see them in httpbin
+      add:
+        "X-Prox-Manipulation-Test": "Request"
+    request_body:
+      condition:
+        method_is: "POST"
+        path_matches: "/manipulate/test-post" # Condition to trigger body change
+      set_json:
+        original_request_path: "{uri_path}"
+        message: "Request body set by Prox"
+        timestamp: "{timestamp_iso}"
+    response_headers: # Optional: Add some headers to see them in the final response
+      add:
+        "X-Prox-Manipulation-Test": "Response"
+    response_body:
+      condition:
+        # Example: Trigger if upstream responds with 200 OK.
+        # Note: Actual status code condition isn't implemented yet in your check_condition,
+        # so this relies on future enhancement or a different condition like a header.
+        # For now, let's assume we might add a header from the upstream or use a path condition
+        # on the original request if direct status code matching isn't available for response_body.
+        # As a placeholder, let's use a path condition on the original request for now,
+        # or we can make it unconditional for testing.
+        # To make it simple for now, let's make it unconditional for any 2xx response.
+        # (Actual implementation of status code check in `check_condition` for responses would be needed)
+        # For a simpler test, let's make it unconditional for this example path:
+        path_matches: "/manipulate/test-response-body" # Condition on original request path
+      set_text: "Response body modified by Prox. Original request was to {uri_path}."
