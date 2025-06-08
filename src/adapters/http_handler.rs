@@ -16,6 +16,42 @@ use regex::Regex;
 use serde_json;
 use std::net::SocketAddr; // Import Regex
 
+// NEW: Helper function to substitute placeholders in a string
+fn substitute_placeholders_in_text(
+    text: &str,
+    ctx: &RequestConditionContext, // Contains uri_path
+    client_ip_str: &str,
+) -> String {
+    let timestamp_iso = Utc::now().to_rfc3339(); // {timestamp_iso}
+    text.replace("{uri_path}", &ctx.uri_path)
+        .replace("{timestamp_iso}", &timestamp_iso)
+        .replace("{client_ip}", client_ip_str)
+}
+
+// NEW: Helper function to substitute placeholders in serde_json::Value
+fn substitute_placeholders_in_json_value(
+    json_value: &mut serde_json::Value,
+    ctx: &RequestConditionContext,
+    client_ip_str: &str,
+) {
+    match json_value {
+        serde_json::Value::String(s) => {
+            *s = substitute_placeholders_in_text(s, ctx, client_ip_str);
+        }
+        serde_json::Value::Array(arr) => {
+            for val in arr {
+                substitute_placeholders_in_json_value(val, ctx, client_ip_str);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (_, val) in map {
+                substitute_placeholders_in_json_value(val, ctx, client_ip_str);
+            }
+        }
+        _ => {} // Do nothing for Null, Bool, Number
+    }
+}
+
 // NEW: Struct to hold request data for condition checking
 #[derive(Clone, Debug)] // Should be Send + Sync implicitly as it owns its data
 struct RequestConditionContext {
@@ -288,33 +324,47 @@ impl HyperHandler {
     async fn apply_body_actions_to_request(
         req: &mut Request<AxumBody>, // Still takes &mut Request to modify it
         actions_config_opt: Option<&BodyActions>,
+        client_ip: Option<SocketAddr>, // Added client_ip
     ) -> Result<(), HandlerError> {
         if let Some(actions_config) = actions_config_opt {
+            // Create context from `req` *before* any potential body modification for condition checking.
+            let ctx = RequestConditionContext::from_request(req); // Context for conditions AND placeholders
+
             if let Some(condition) = &actions_config.condition {
-                // Create context from `req` *before* any potential body modification for condition checking.
-                // This context is temporary and local to this function call.
-                let ctx = RequestConditionContext::from_request(req);
                 if !Self::check_condition(&ctx, condition) {
                     return Ok(()); // Condition not met, skip actions
                 }
             }
 
-            if let Some(text_content) = &actions_config.set_text {
-                *req.body_mut() = AxumBody::from(text_content.clone());
+            // Prepare client_ip_str for placeholder substitution
+            let client_ip_str = client_ip.map(|ip| ip.ip().to_string()).unwrap_or_default();
+
+            if let Some(text_content_template) = &actions_config.set_text {
+                // Substitute placeholders in text_content
+                let final_text_content =
+                    substitute_placeholders_in_text(text_content_template, &ctx, &client_ip_str);
+
+                *req.body_mut() = AxumBody::from(final_text_content.clone());
                 req.headers_mut().remove(hyper::header::CONTENT_TYPE);
                 req.headers_mut().remove(hyper::header::CONTENT_LENGTH);
                 req.headers_mut().insert(
                     hyper::header::CONTENT_LENGTH,
-                    HeaderValue::from(text_content.len()),
+                    HeaderValue::from(final_text_content.len()),
                 );
-            } else if let Some(json_content) = &actions_config.set_json {
-                match serde_json::to_string(json_content) {
+            } else if let Some(json_content_template) = &actions_config.set_json {
+                // Substitute placeholders in json_content
+                let mut final_json_content = json_content_template.clone();
+                substitute_placeholders_in_json_value(&mut final_json_content, &ctx, &client_ip_str);
+
+                match serde_json::to_string(&final_json_content) {
                     Ok(json_str) => {
                         *req.body_mut() = AxumBody::from(json_str.clone());
+                        req.headers_mut().remove(hyper::header::CONTENT_TYPE); // Ensure old one is removed or type is correctly set
                         req.headers_mut().insert(
                             hyper::header::CONTENT_TYPE,
                             HeaderValue::from_static("application/json"),
                         );
+                        req.headers_mut().remove(hyper::header::CONTENT_LENGTH);
                         req.headers_mut().insert(
                             hyper::header::CONTENT_LENGTH,
                             HeaderValue::from(json_str.len()),
@@ -334,72 +384,109 @@ impl HyperHandler {
 
     // UPDATED: apply_body_actions_to_response
     async fn apply_body_actions_to_response(
-        mut response: AxumResponse,
+        response_to_modify: AxumResponse, // Renamed for clarity
         actions_config_opt: Option<&BodyActions>,
-        // This context is built from the *initial* client request.
-        condition_check_ctx: Option<&RequestConditionContext>,
+        // This context is built from the *initial* client request. Used for conditions AND placeholders.
+        initial_req_ctx_opt: Option<&RequestConditionContext>,
+        client_ip: Option<SocketAddr>, // Added client_ip
     ) -> Result<AxumResponse, HandlerError> {
-        if let Some(actions_config) = actions_config_opt {
-            if let Some(condition) = &actions_config.condition {
-                if let Some(ctx) = condition_check_ctx {
+        let actions_config = match actions_config_opt {
+            Some(config) => config,
+            None => return Ok(response_to_modify), // No actions, return original
+        };
+
+        // Check condition if present
+        if let Some(condition) = &actions_config.condition {
+            match initial_req_ctx_opt {
+                Some(ctx) => {
                     if !Self::check_condition(ctx, condition) {
-                        return Ok(response); // Condition not met, return original response
+                        return Ok(response_to_modify); // Condition not met
                     }
-                } else {
-                    tracing::warn!(
-                        "Condition specified for body actions on response, but no context provided. Skipping actions."
-                    );
-                    return Ok(response);
+                }
+                None => {
+                    tracing::warn!("Condition specified for response body actions, but no context provided for check. Skipping actions.");
+                    return Ok(response_to_modify); // No context for condition
                 }
             }
+        }
 
-            let (mut parts, body) = response.into_parts();
-            // Use .collect() from BodyExt to get the body bytes
-            let body_bytes = match body.collect().await {
+        // At this point, conditions are met or no conditions.
+        // Proceed with actions if set_text or set_json is defined. These need context for placeholders.
+        if actions_config.set_text.is_none() && actions_config.set_json.is_none() {
+            // No actions that modify the body content are defined.
+            return Ok(response_to_modify);
+        }
+
+        // We need context for placeholders.
+        let initial_req_ctx = match initial_req_ctx_opt {
+            Some(ctx) => ctx,
+            None => {
+                tracing::warn!("Response body actions (set_text/set_json) require context for placeholders, but none provided. Skipping actions.");
+                return Ok(response_to_modify); // No context for placeholders
+            }
+        };
+
+        let client_ip_str = client_ip.map(|ip| ip.ip().to_string()).unwrap_or_default();
+        let (mut parts, original_body_stream) = response_to_modify.into_parts(); // Consumes response_to_modify
+        let final_body_data: Vec<u8>;
+
+        if let Some(text_content_template) = &actions_config.set_text {
+            let substituted_text = substitute_placeholders_in_text(
+                text_content_template,
+                initial_req_ctx,
+                &client_ip_str,
+            );
+            final_body_data = substituted_text.into_bytes();
+            parts.headers.remove(hyper::header::CONTENT_TYPE); // Clear old content type
+            parts.headers.remove(hyper::header::CONTENT_LENGTH); // Clear old length
+            parts.headers.insert(
+                hyper::header::CONTENT_LENGTH,
+                HeaderValue::from(final_body_data.len()),
+            );
+        } else if let Some(json_content_template) = &actions_config.set_json {
+            let mut substituted_json = json_content_template.clone();
+            substitute_placeholders_in_json_value(
+                &mut substituted_json,
+                initial_req_ctx,
+                &client_ip_str,
+            );
+            match serde_json::to_vec(&substituted_json) {
+                Ok(json_vec) => {
+                    final_body_data = json_vec;
+                    parts.headers.remove(hyper::header::CONTENT_TYPE); // Clear old content type
+                    parts.headers.insert(
+                        hyper::header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/json"),
+                    );
+                    parts.headers.remove(hyper::header::CONTENT_LENGTH); // Clear old length
+                    parts.headers.insert(
+                        hyper::header::CONTENT_LENGTH,
+                        HeaderValue::from(final_body_data.len()),
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("Failed to serialize JSON for response body: {}", e);
+                    return Err(HandlerError::InternalError(
+                        "Failed to serialize JSON for response body".to_string(),
+                    ));
+                }
+            }
+        } else {
+            // This case should ideally be caught by the (is_none && is_none) check earlier.
+            // If somehow reached, it means no modification was intended by set_text/set_json.
+            // We must reconstruct the response with the original body.
+            let collected_body_bytes = match original_body_stream.collect().await {
                 Ok(collected) => collected.to_bytes(),
                 Err(e) => {
-                    tracing::error!("Failed to read response body: {}", e);
-                    return Err(HandlerError::InternalError(format!(
-                        "Failed to read response body: {}",
-                        e
-                    )));
+                    tracing::error!("Failed to read original response body when no modification applied: {}", e);
+                    return Err(HandlerError::InternalError(format!("Failed to read response body: {}", e)));
                 }
             };
-
-            let mut new_body_bytes = body_bytes.to_vec();
-
-            if let Some(text_content) = &actions_config.set_text {
-                new_body_bytes = text_content.clone().into_bytes();
-                parts.headers.remove(hyper::header::CONTENT_TYPE);
-                parts.headers.remove(hyper::header::CONTENT_LENGTH);
-                parts.headers.insert(
-                    hyper::header::CONTENT_LENGTH,
-                    HeaderValue::from(new_body_bytes.len()),
-                );
-            } else if let Some(json_content) = &actions_config.set_json {
-                match serde_json::to_vec(json_content) {
-                    Ok(json_vec) => {
-                        new_body_bytes = json_vec;
-                        parts.headers.insert(
-                            hyper::header::CONTENT_TYPE,
-                            HeaderValue::from_static("application/json"),
-                        );
-                        parts.headers.insert(
-                            hyper::header::CONTENT_LENGTH,
-                            HeaderValue::from(new_body_bytes.len()),
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to serialize JSON for response body: {}", e);
-                        return Err(HandlerError::InternalError(
-                            "Failed to serialize JSON for response body".to_string(),
-                        ));
-                    }
-                }
-            }
-            response = Response::from_parts(parts, AxumBody::from(new_body_bytes)).into_response();
+            final_body_data = collected_body_bytes.to_vec();
+            // Content-Type and Content-Length from original `parts` should be preserved if no modification.
         }
-        Ok(response)
+        
+        Ok(Response::from_parts(parts, AxumBody::from(final_body_data)).into_response())
     }
 
     async fn handle_proxy(&self, args: ProxyHandlerArgs<'_>) -> AxumResponse {
@@ -419,7 +506,7 @@ impl HyperHandler {
 
         // apply_body_actions_to_request creates its own context from `req` before modification
         if let Err(e) =
-            Self::apply_body_actions_to_request(&mut req, args.request_body_actions).await
+            Self::apply_body_actions_to_request(&mut req, args.request_body_actions, args.client_ip).await
         {
             // Convert HandlerError to AxumResponse
             return match e {
@@ -457,6 +544,7 @@ impl HyperHandler {
                             axum_resp,
                             args.response_body_actions,
                             Some(args.initial_req_ctx),
+                            args.client_ip, // Pass client_ip
                         )
                         .await
                         {
@@ -550,7 +638,7 @@ impl HyperHandler {
 
         // apply_body_actions_to_request creates its own context from `req` before modification
         if let Err(e) =
-            Self::apply_body_actions_to_request(&mut req, args.request_body_actions).await
+            Self::apply_body_actions_to_request(&mut req, args.request_body_actions, args.client_ip).await
         {
             return match e {
                 HandlerError::InternalError(msg) => {
@@ -594,6 +682,7 @@ impl HyperHandler {
                             axum_resp,
                             args.response_body_actions,
                             Some(args.initial_req_ctx),
+                            args.client_ip, // Pass client_ip
                         )
                         .await
                         {
