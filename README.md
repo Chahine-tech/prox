@@ -14,6 +14,9 @@ Prox is a lightweight reverse proxy built in Rust, implementing a hexagonal arch
 - Configurable via YAML
 - Custom error handling with type safety
 - Browser-like request headers for improved compatibility
+- Request and Response Manipulation (Headers & Body) with conditional logic.
+
+👉 **See also:** [Value-Adding Ideas and Implementation Status](docs/REVERSE_PROXY_VALUE_ADDITIONS.md)
 
 ## Architecture
 
@@ -122,6 +125,32 @@ routes:
       # status_code: 429 # Optional: defaults to 429
       # message: "Too many requests from your IP. Please try again later." # Optional: defaults to "Too Many Requests"
       # algorithm: "token_bucket" # Optional: defaults to token_bucket (current default)
+    request_headers:
+      add:
+        "X-My-Custom-Header": "MyValue"
+        "X-Forwarded-By": "Prox"
+        "X-Real-IP": "{client_ip}"
+      remove: ["User-Agent", "Referer"]
+    response_headers:
+      add:
+        "Server": "Prox"
+      remove: ["X-Powered-By"]
+    request_body: # Example: Modify the request body
+      condition: # Only apply if the request path contains "/special"
+        path_matches: "/special"
+      set_text: "This is a modified request body."
+    response_body: # Example: Modify the response body if it's a 404
+      condition:
+        # Assuming your service might return a specific header for identifiable errors
+        # or you might match on status code if that becomes a condition option.
+        # For now, let's imagine a header condition.
+        has_header:
+          name: "X-Error-Type"
+          value_matches: "NotFound"
+      set_json:
+        error: "Resource not found"
+        message: "The requested resource was not found on the server."
+        status: 404
   "/api/v1": # Example for API versioning
     type: "proxy"
     target: "http://internal-service"
@@ -163,6 +192,19 @@ curl -k https://127.0.0.1:3000/proxy/get
 # Test proxy with path rewriting
 curl -k https://127.0.0.1:3000/proxy/test/path # Assuming /proxy has path_rewrite: "/anything"
 # Expected: httpbin.org receives a request for /anything/test/path
+
+# Test request header addition (X-My-Custom-Header: MyValue)
+curl -k -H "X-My-Custom-Header: OriginalValue" https://127.0.0.1:3000/proxy/headers -v
+# Expected: Prox adds/overwrites X-My-Custom-Header, removes User-Agent, adds X-Real-IP
+
+# Test request body modification (POST to /proxy/special/anything)
+# This will trigger the request_body.set_text action due to path_matches: "/special"
+curl -k -X POST -d '{"original": "data"}' https://127.0.0.1:3000/proxy/special/post -H "Content-Type: application/json"
+# Expected: httpbin.org receives "This is a modified request body."
+
+# Test response header removal (X-Powered-By) and addition (Server: Prox)
+curl -k -I https://127.0.0.1:3000/proxy/get
+# Expected: X-Powered-By header (if present from httpbin) is removed, Server: Prox is added.
 
 # Test load balancing (run multiple times to see round-robin in action)
 curl -k https://127.0.0.1:3000/balance/get
