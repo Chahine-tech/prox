@@ -6,15 +6,15 @@ use anyhow::Result;
 use axum::body::Body as AxumBody;
 use axum::extract::ConnectInfo;
 use axum::response::{IntoResponse, Response as AxumResponse};
-use chrono::Utc; // Import Utc for timestamp
-use http_body_util::BodyExt; // Import BodyExt for .collect()
+use chrono::Utc; 
+use http_body_util::BodyExt;
 use hyper::{
     Request, Response, StatusCode,
     header::{HeaderName, HeaderValue},
 };
 use regex::Regex;
 use serde_json;
-use std::net::SocketAddr; // Import Regex
+use std::net::SocketAddr;
 
 // NEW: Helper function to substitute placeholders in a string
 fn substitute_placeholders_in_text(
