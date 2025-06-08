@@ -6,7 +6,7 @@ use anyhow::Result;
 use axum::body::Body as AxumBody;
 use axum::extract::ConnectInfo;
 use axum::response::{IntoResponse, Response as AxumResponse};
-use chrono::Utc; 
+use chrono::Utc;
 use http_body_util::BodyExt;
 use hyper::{
     Request, Response, StatusCode,
