@@ -49,6 +49,7 @@ src/
 │   ├── http/             # HTTP server implementation
 │   │   ├── server.rs     # Hyper server implementation
 │   │   └── mod.rs
+│   ├── acme.rs           # ACME/Let's Encrypt certificate management
 │   ├── http_handler.rs   # HTTP request handler
 │   ├── http_client.rs    # HTTP client implementation
 │   ├── file_system.rs    # Static file handling
