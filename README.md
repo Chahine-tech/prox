@@ -49,6 +49,7 @@ src/
 │   ├── http/             # HTTP server implementation
 │   │   ├── server.rs     # Hyper server implementation
 │   │   └── mod.rs
+│   ├── acme.rs           # ACME/Let's Encrypt certificate management
 │   ├── http_handler.rs   # HTTP request handler
 │   ├── http_client.rs    # HTTP client implementation
 │   ├── file_system.rs    # Static file handling
@@ -69,24 +70,66 @@ src/
 
 ## Usage
 
+## Usage
+
+### Option 1: Manual TLS Certificates
+
 1. Generate self-signed certificates for HTTPS (or use your own):
    ```bash
    mkdir -p certs
    openssl req -x509 -newkey rsa:4096 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes -subj '/CN=localhost'
    ```
 
-2. Configure your reverse proxy in `config.yaml`
+2. Configure your reverse proxy in `config.yaml` with manual certificates
 
 3. Run the proxy: `cargo run`
 
-## Configuration Example
+### Option 2: Automatic TLS with Let's Encrypt (ACME)
+
+1. Configure your reverse proxy in `config.yaml` with ACME settings
+
+2. Ensure your domain points to your server and port 443 is accessible
+
+3. Run the proxy: `cargo run`
+
+**Note**: For ACME to work, your server must be publicly accessible on port 443, and the domains you specify must point to your server for HTTP-01 challenge validation.
+
+## Configuration Examples
+
+### Manual TLS Configuration
 
 ```yaml
-listen_addr: "127.0.0.1:3002"
-# TLS configuration
+listen_addr: "0.0.0.0:443"
+# Manual TLS configuration
 tls:
   cert_path: "./certs/cert.pem"
   key_path: "./certs/key.pem"
+
+# Health check configuration
+health_check:
+  enabled: true
+  interval_secs: 10
+  timeout_secs: 5
+  path: "/health"
+  unhealthy_threshold: 3
+  healthy_threshold: 2
+```
+
+### Automatic TLS with ACME/Let's Encrypt
+
+```yaml
+listen_addr: "0.0.0.0:443"
+# ACME configuration for automatic certificate management
+tls:
+  acme:
+    enabled: true
+    domains:
+      - "example.com"
+      - "www.example.com"
+    email: "admin@example.com"
+    staging: false  # Set to true for testing
+    storage_path: "./acme_storage"
+    renewal_days_before_expiry: 30
 
 # Health check configuration
 health_check:
@@ -174,6 +217,30 @@ routes:
       requests: 1000
       period: "1h"
 ```
+
+## ACME Configuration Options
+
+When using automatic TLS certificate management with ACME (Let's Encrypt), you can configure the following options:
+
+- **`enabled`**: Set to `true` to enable ACME certificate management
+- **`domains`**: List of domains to include in the certificate (first domain is the primary)
+- **`email`**: Contact email for Let's Encrypt account registration
+- **`staging`**: Set to `true` to use Let's Encrypt staging environment for testing (optional, defaults to `false`)
+- **`ca_url`**: Custom ACME CA URL (optional, defaults to Let's Encrypt production)
+- **`storage_path`**: Directory to store certificates and account data (optional, defaults to `./acme_storage`)
+- **`renewal_days_before_expiry`**: Days before expiry to renew certificates (optional, defaults to 30)
+
+### ACME Requirements
+
+1. **Public accessibility**: Your server must be publicly accessible on port 443
+2. **Domain DNS**: All domains in your configuration must point to your server's IP address
+3. **HTTP-01 challenge**: Prox automatically handles HTTP-01 challenges by serving files from `./static/.well-known/acme-challenge/`
+
+### ACME Certificate Renewal
+
+- Certificates are automatically checked daily for renewal
+- Renewal occurs when the certificate expires within the configured threshold (default: 30 days)
+- The renewal process runs in the background without interrupting service
 
 ## Testing
 

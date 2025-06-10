@@ -1,3 +1,4 @@
+pub mod acme;
 pub mod file_system;
 pub mod health_checker;
 pub mod http;

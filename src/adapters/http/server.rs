@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::Json;
 use axum::body::Body as AxumBody;
 use axum::extract::State;
@@ -18,6 +18,7 @@ use hyper::StatusCode;
 use tokio::sync::Mutex as TokioMutex;
 use tower_http::trace::TraceLayer;
 
+use crate::adapters::acme::AcmeService;
 use crate::adapters::file_system::TowerFileSystem;
 use crate::adapters::http_client::HyperHttpClient;
 use crate::adapters::http_handler::HyperHandler;
@@ -94,7 +95,11 @@ async fn update_config_handler(
     }
 
     if let Some(tls_config) = &new_config_payload.tls {
-        builder = builder.tls(tls_config.cert_path.clone(), tls_config.key_path.clone());
+        if let (Some(cert_path), Some(key_path)) = (&tls_config.cert_path, &tls_config.key_path) {
+            builder = builder.tls(cert_path.clone(), key_path.clone());
+        } else if let Some(acme_config) = &tls_config.acme {
+            builder = builder.acme(acme_config.clone());
+        }
     }
 
     for (backend, path) in new_config_payload.backend_health_paths.iter() {
@@ -178,21 +183,62 @@ impl HttpServer for HyperServer {
         tracing::info!("Server listening on {}", addr);
 
         if let Some(tls_config_data) = tls_config_opt_owned {
-            // Use the owned Option
+            // Handle both manual certificates and ACME
+            let (cert_path, key_path) = if let Some(acme_config) = &tls_config_data.acme {
+                if acme_config.enabled {
+                    tracing::info!(
+                        "ACME is enabled. Requesting certificate for domains: {:?}",
+                        acme_config.domains
+                    );
+
+                    let acme_service = AcmeService::new(acme_config.clone())
+                        .context("Failed to create ACME service")?;
+
+                    let cert_info = acme_service
+                        .get_certificate()
+                        .await
+                        .context("Failed to get ACME certificate")?;
+
+                    // Start renewal task
+                    acme_service.start_renewal_task();
+
+                    tracing::info!(
+                        "ACME certificate obtained: cert={}, key={}",
+                        cert_info.cert_path,
+                        cert_info.key_path
+                    );
+                    (cert_info.cert_path, cert_info.key_path)
+                } else {
+                    return Err(anyhow!("ACME is configured but not enabled"));
+                }
+            } else if let (Some(cert_path), Some(key_path)) =
+                (&tls_config_data.cert_path, &tls_config_data.key_path)
+            {
+                tracing::info!(
+                    "Using manual TLS certificates: cert={}, key={}",
+                    cert_path,
+                    key_path
+                );
+                (cert_path.clone(), key_path.clone())
+            } else {
+                return Err(anyhow!(
+                    "TLS is configured but neither manual certificates nor ACME configuration is provided"
+                ));
+            };
+
             tracing::info!(
                 "TLS is ENABLED. Certificate: {}, Key: {}",
-                tls_config_data.cert_path,
-                tls_config_data.key_path
+                cert_path,
+                key_path
             );
-            let rustls_config =
-                RustlsConfig::from_pem_file(&tls_config_data.cert_path, &tls_config_data.key_path)
-                    .await // This await is now safe
-                    .with_context(|| {
-                        format!(
-                            "Failed to load TLS certificate/key from paths: cert='{}', key='{}'",
-                            tls_config_data.cert_path, tls_config_data.key_path
-                        )
-                    })?;
+            let rustls_config = RustlsConfig::from_pem_file(&cert_path, &key_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to load TLS certificate/key from paths: cert='{}', key='{}'",
+                        cert_path, key_path
+                    )
+                })?;
             axum_server::bind_rustls(addr, rustls_config)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .await // This await is now safe

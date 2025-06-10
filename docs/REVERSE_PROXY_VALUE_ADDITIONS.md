@@ -35,12 +35,16 @@ This document outlines current major problems with reverse proxies and proposes 
 
 ---
 
-## 4. Automatic TLS Certificate Management ✅ (Partially Implemented)
+## 4. Automatic TLS Certificate Management ✅ (Implemented)
 **Problem:** Manual certificate management is error-prone and not scalable.
 
-**Solution:**
+**Solution:** *Fully implemented in Prox.*
 - Prox supports TLS with user-provided certificates (see README for setup).
-- Automatic certificate provisioning/renewal (ACME/Let's Encrypt) is *planned*.
+- **NEW**: Automatic certificate provisioning/renewal using ACME/Let's Encrypt is now fully implemented.
+- Supports both staging and production Let's Encrypt environments.
+- Automatic daily certificate renewal checks.
+- HTTP-01 challenge validation.
+- Configurable storage paths and renewal thresholds.
 
 ---
 
@@ -190,7 +194,7 @@ This document outlines current major problems with reverse proxies and proposes 
 | Config reload               | Hot-reload, no downtime                               | ✅ Implemented |
 | Observability               | Metrics, tracing, dashboard                           | Planned        |
 | Rate limiting               | Flexible, multi-key, dynamic                          | ✅ Implemented |
-| TLS management              | User-provided certs (auto/ACME planned)               | ✅/Planned     |
+| TLS management              | User-provided certs + auto ACME/Let's Encrypt     | ✅ Implemented |
 | Graceful restarts           | Zero-downtime, socket passing                         | Planned        |
 | AuthN/AuthZ                 | Built-in, pluggable                                   | Planned        |
 | Service discovery           | Dynamic, Consul, DNS, health checks                   | Partial (Health checks implemented) |

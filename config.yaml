@@ -1,8 +1,21 @@
 listen_addr: "127.0.0.1:3000"
 # TLS configuration - uncomment to enable TLS
 tls:
+  # Option 1: Manual certificates (existing approach) - ACTIVE FOR LOCAL TESTING
   cert_path: "./certs/cert.pem"
   key_path: "./certs/key.pem"
+  
+  # Option 2: Automatic ACME/Let's Encrypt certificates
+  # Comment out manual cert_path/key_path above and uncomment acme section below
+  # acme:
+  #   enabled: true
+  #   domains:
+  #     - "yourdomain.com"
+  #     - "www.yourdomain.com"
+  #   email: "your-email@example.com"  # Required for Let's Encrypt account
+  #   staging: true  # Set to true for testing with Let's Encrypt staging
+  #   storage_path: "./acme_storage"  # Where to store certificates and account info
+  #   renewal_days_before_expiry: 30  # Renew certificates 30 days before expiry
 
 # Health check configuration
 health_check:
