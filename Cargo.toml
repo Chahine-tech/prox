@@ -47,8 +47,8 @@ chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 
 # ACME/Let's Encrypt dependencies
-acme-lib = "0.9"
-openssl = "0.10"
+instant-acme = "0.7.2"
+rcgen = "0.13"
 
 [dev-dependencies]
 tempfile = "3.13"
