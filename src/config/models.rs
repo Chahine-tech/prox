@@ -84,11 +84,22 @@ impl ServerConfigBuilder {
         self
     }
 
-    /// Set TLS configuration
+    /// Set TLS configuration with manual certificate paths
     pub fn tls(mut self, cert_path: impl Into<String>, key_path: impl Into<String>) -> Self {
         self.tls = Some(TlsConfig {
-            cert_path: cert_path.into(),
-            key_path: key_path.into(),
+            cert_path: Some(cert_path.into()),
+            key_path: Some(key_path.into()),
+            acme: None,
+        });
+        self
+    }
+
+    /// Set ACME configuration for automatic certificate management
+    pub fn acme(mut self, acme_config: AcmeConfig) -> Self {
+        self.tls = Some(TlsConfig {
+            cert_path: None,
+            key_path: None,
+            acme: Some(acme_config),
         });
         self
     }
@@ -132,8 +143,23 @@ impl ServerConfigBuilder {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TlsConfig {
-    pub cert_path: String,
-    pub key_path: String,
+    // Manual certificate paths (existing functionality)
+    pub cert_path: Option<String>,
+    pub key_path: Option<String>,
+
+    // ACME configuration (new functionality)
+    pub acme: Option<AcmeConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AcmeConfig {
+    pub enabled: bool,
+    pub domains: Vec<String>,
+    pub email: String,
+    pub ca_url: Option<String>, // Default to Let's Encrypt production
+    pub staging: Option<bool>,  // Use Let's Encrypt staging for testing
+    pub storage_path: Option<String>, // Where to store certificates and private keys
+    pub renewal_days_before_expiry: Option<u64>, // How many days before expiry to renew
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

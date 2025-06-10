@@ -45,3 +45,7 @@ governor = "0.10.0"
 humantime = "2.1.0"
 chrono = { version = "0.4", features = ["serde"] } 
 regex = "1"
+
+# ACME/Let's Encrypt dependencies
+acme-lib = "0.9"
+openssl = "0.10"
