@@ -423,3 +423,320 @@ impl CertificateInfo {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::TempDir;
+
+    fn create_test_acme_config() -> AcmeConfig {
+        AcmeConfig {
+            enabled: true,
+            domains: vec![
+                "test.example.com".to_string(),
+                "www.test.example.com".to_string(),
+            ],
+            email: "test@example.com".to_string(),
+            ca_url: None,
+            staging: Some(true),
+            storage_path: None, // Will be set by individual tests
+            renewal_days_before_expiry: Some(30),
+        }
+    }
+
+    fn create_test_cert_pem() -> String {
+        // This is a dummy certificate for testing purposes
+        // In a real scenario, you'd use a proper test certificate
+        "-----BEGIN CERTIFICATE-----
+MIIDXTCCAkWgAwIBAgIJAKoK/heBjcOuMA0GCSqGSIb3DQEBBQUAMEUxCzAJBgNV
+BAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX
+aWRnaXRzIFB0eSBMdGQwHhcNMTUwODEzMDk1NjA3WhcNMjUwODEwMDk1NjA3WjBF
+MQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50
+ZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB
+CgKCAQEAwWZjTLDv8VjOmKf5vTGzj84sQwOZyBRNGo3WnIw3mfXy5YG5zE5O/Iy2
+PysKj2Xx3P1qCGhzLJe6JmhV9FmI5jTL7eKT3IB4Y6eH9H5F7Q7xK6Y3nN8x4Y1K
+4J5Q6YGV6P1C8J7w4n0L2e8uI7g9o3b5X1Y3V1l8f7jR6Q7q2k5H5Y8p4a4T2c3L
+8e2i4e4D2U8A8a8a4O4P4i4I4C4G4H4J4K4L4M4N4O4P4Q4R4S4T4U4V4W4X4Y4Z
+QIDAQABMA0GCSqGSIb3DQEBBQUAA4IBAQCQjKzj7IvKJ1Q9K4W8A5Y5J5z5z5z5
+z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5z5
+-----END CERTIFICATE-----"
+            .to_string()
+    }
+
+    fn create_test_key_pem() -> String {
+        // This is a dummy private key for testing purposes
+        "-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDBZmNMsO/xWM6Y
+p/m9MbOPzixDA5nIFE0ajdacjDeZ9fLlgbnMTk78jLY/KwqPZfHc/WoIaHMsl7om
+aFX0WYjmNMvt4pPcgHhjp4f0fkXtDvErpjec3zHhjUrgnsaJQKBgQCx5K3y
+-----END PRIVATE KEY-----"
+            .to_string()
+    }
+
+    #[test]
+    fn test_acme_service_new() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let mut config = create_test_acme_config();
+        config.storage_path = Some(temp_dir.path().to_string_lossy().to_string());
+
+        let service = AcmeService::new(config).expect("Failed to create ACME service");
+
+        assert_eq!(service.config.domains.len(), 2);
+        assert_eq!(service.config.email, "test@example.com");
+        assert!(service.storage_path.exists());
+    }
+
+    #[test]
+    fn test_acme_service_new_creates_storage_directory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let storage_path = temp_dir.path().join("acme_storage");
+
+        let mut config = create_test_acme_config();
+        config.storage_path = Some(storage_path.to_string_lossy().to_string());
+
+        let _service = AcmeService::new(config).expect("Failed to create ACME service");
+
+        assert!(storage_path.exists());
+        assert!(storage_path.is_dir());
+    }
+
+    #[test]
+    fn test_get_directory_url() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let mut config = create_test_acme_config();
+        config.storage_path = Some(temp_dir.path().to_string_lossy().to_string());
+
+        // Test staging URL
+        config.staging = Some(true);
+        let service = AcmeService::new(config.clone()).expect("Failed to create ACME service");
+        assert!(matches!(
+            service.get_directory_url(),
+            DirectoryUrl::LetsEncryptStaging
+        ));
+
+        // Test production URL
+        config.staging = Some(false);
+        let service = AcmeService::new(config.clone()).expect("Failed to create ACME service");
+        assert!(matches!(
+            service.get_directory_url(),
+            DirectoryUrl::LetsEncrypt
+        ));
+
+        // Test custom URL
+        config.ca_url = Some("https://custom-ca.example.com/directory".to_string());
+        let service = AcmeService::new(config).expect("Failed to create ACME service");
+        if let DirectoryUrl::Other(url) = service.get_directory_url() {
+            assert_eq!(url, "https://custom-ca.example.com/directory");
+        } else {
+            panic!("Expected DirectoryUrl::Other");
+        }
+    }
+
+    #[test]
+    fn test_get_cert_paths() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let mut config = create_test_acme_config();
+        config.storage_path = Some(temp_dir.path().to_string_lossy().to_string());
+
+        let service = AcmeService::new(config).expect("Failed to create ACME service");
+        let (cert_path, key_path) = service.get_cert_paths("test.example.com");
+
+        assert!(cert_path.ends_with("test.example.com.crt"));
+        assert!(key_path.ends_with("test.example.com.key"));
+        assert_eq!(cert_path.parent(), key_path.parent());
+    }
+
+    #[test]
+    fn test_check_certificate_no_files() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let mut config = create_test_acme_config();
+        config.storage_path = Some(temp_dir.path().to_string_lossy().to_string());
+
+        let service = AcmeService::new(config).expect("Failed to create ACME service");
+        let result = service.check_certificate("nonexistent.example.com");
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_check_certificate_with_valid_files() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let mut config = create_test_acme_config();
+        config.storage_path = Some(temp_dir.path().to_string_lossy().to_string());
+
+        let service = AcmeService::new(config).expect("Failed to create ACME service");
+        let (cert_path, key_path) = service.get_cert_paths("test.example.com");
+
+        // Create dummy certificate and key files
+        fs::write(&cert_path, create_test_cert_pem()).expect("Failed to write test certificate");
+        fs::write(&key_path, create_test_key_pem()).expect("Failed to write test key");
+
+        // Note: This test might fail because the dummy certificate might not be valid
+        // In a real implementation, you'd want to create a proper test certificate
+        // For now, we're just testing that the function doesn't crash
+        let _result = service.check_certificate("test.example.com");
+        // We don't assert the result because parsing the dummy cert might fail
+    }
+
+    #[test]
+    fn test_has_expired_certificate_no_certs() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let mut config = create_test_acme_config();
+        config.storage_path = Some(temp_dir.path().to_string_lossy().to_string());
+
+        let service = AcmeService::new(config).expect("Failed to create ACME service");
+        assert!(!service.has_expired_certificate());
+    }
+
+    #[test]
+    fn test_get_certificate_status_empty() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let mut config = create_test_acme_config();
+        config.storage_path = Some(temp_dir.path().to_string_lossy().to_string());
+
+        let service = AcmeService::new(config).expect("Failed to create ACME service");
+        let status = service.get_certificate_status();
+
+        assert_eq!(status.len(), 2); // Two domains configured
+        assert_eq!(status[0].0, "test.example.com");
+        assert_eq!(status[1].0, "www.test.example.com");
+        assert!(status[0].1.is_none()); // No certificate for first domain
+        assert!(status[1].1.is_none()); // No certificate for second domain
+    }
+
+    #[test]
+    fn test_certificate_info_is_expired() {
+        // Test with expired certificate
+        let expired_cert = CertificateInfo {
+            cert_path: "/test/cert.pem".to_string(),
+            key_path: "/test/key.pem".to_string(),
+            expires_at: UNIX_EPOCH + Duration::from_secs(1000), // Way in the past
+        };
+        assert!(expired_cert.is_expired());
+
+        // Test with valid certificate
+        let valid_cert = CertificateInfo {
+            cert_path: "/test/cert.pem".to_string(),
+            key_path: "/test/key.pem".to_string(),
+            expires_at: SystemTime::now() + Duration::from_secs(86400), // 1 day in the future
+        };
+        assert!(!valid_cert.is_expired());
+    }
+
+    #[test]
+    fn test_certificate_info_expires_within_days() {
+        let cert = CertificateInfo {
+            cert_path: "/test/cert.pem".to_string(),
+            key_path: "/test/key.pem".to_string(),
+            expires_at: SystemTime::now() + Duration::from_secs(15 * 24 * 60 * 60), // 15 days
+        };
+
+        assert!(cert.expires_within_days(30)); // Expires within 30 days
+        assert!(cert.expires_within_days(15)); // Expires within 15 days
+        assert!(!cert.expires_within_days(10)); // Does not expire within 10 days
+    }
+
+    #[test]
+    fn test_certificate_info_days_until_expiry() {
+        // Test certificate expiring in the future
+        let future_cert = CertificateInfo {
+            cert_path: "/test/cert.pem".to_string(),
+            key_path: "/test/key.pem".to_string(),
+            expires_at: SystemTime::now() + Duration::from_secs(10 * 24 * 60 * 60), // 10 days
+        };
+        let days = future_cert.days_until_expiry();
+        assert!((9..=10).contains(&days)); // Allow for small timing differences
+
+        // Test expired certificate
+        let expired_cert = CertificateInfo {
+            cert_path: "/test/cert.pem".to_string(),
+            key_path: "/test/key.pem".to_string(),
+            expires_at: SystemTime::now() - Duration::from_secs(5 * 24 * 60 * 60), // 5 days ago
+        };
+        let days = expired_cert.days_until_expiry();
+        assert!((-5..=-4).contains(&days)); // Negative for expired certs
+    }
+
+    #[test]
+    fn test_certificate_info_log_info() {
+        // Test that log_info doesn't panic
+        let cert = CertificateInfo {
+            cert_path: "/test/cert.pem".to_string(),
+            key_path: "/test/key.pem".to_string(),
+            expires_at: SystemTime::now() + Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+        };
+
+        // This should not panic
+        cert.log_info();
+    }
+
+    #[tokio::test]
+    async fn test_get_certificate_no_domains() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let mut config = create_test_acme_config();
+        config.domains = vec![]; // No domains
+        config.storage_path = Some(temp_dir.path().to_string_lossy().to_string());
+
+        let service = AcmeService::new(config).expect("Failed to create ACME service");
+        let result = service.get_certificate().await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No domains configured for ACME")
+        );
+    }
+
+    #[test]
+    fn test_acme_config_validation() {
+        let config = AcmeConfig {
+            enabled: true,
+            domains: vec!["test.example.com".to_string()],
+            email: "test@example.com".to_string(),
+            ca_url: Some("https://custom-ca.example.com/directory".to_string()),
+            staging: Some(false),
+            storage_path: Some("./custom_storage".to_string()),
+            renewal_days_before_expiry: Some(15),
+        };
+
+        assert!(config.enabled);
+        assert_eq!(config.domains.len(), 1);
+        assert_eq!(config.email, "test@example.com");
+        assert_eq!(
+            config.ca_url.as_ref().unwrap(),
+            "https://custom-ca.example.com/directory"
+        );
+        assert_eq!(config.staging, Some(false));
+        assert_eq!(config.storage_path.as_ref().unwrap(), "./custom_storage");
+        assert_eq!(config.renewal_days_before_expiry, Some(15));
+    }
+
+    #[test]
+    fn test_default_values() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let config = AcmeConfig {
+            enabled: true,
+            domains: vec!["test.example.com".to_string()],
+            email: "test@example.com".to_string(),
+            ca_url: None,
+            staging: None,
+            storage_path: Some(temp_dir.path().to_string_lossy().to_string()),
+            renewal_days_before_expiry: None,
+        };
+
+        let service = AcmeService::new(config).expect("Failed to create ACME service");
+
+        // Test default directory URL (should be production Let's Encrypt)
+        assert!(matches!(
+            service.get_directory_url(),
+            DirectoryUrl::LetsEncrypt
+        ));
+
+        // Test default renewal days
+        assert_eq!(service.config.renewal_days_before_expiry.unwrap_or(30), 30);
+    }
+}

@@ -49,3 +49,6 @@ regex = "1"
 # ACME/Let's Encrypt dependencies
 acme-lib = "0.9"
 openssl = "0.10"
+
+[dev-dependencies]
+tempfile = "3.13"
