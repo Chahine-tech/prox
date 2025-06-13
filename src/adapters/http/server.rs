@@ -6,15 +6,17 @@ use anyhow::{Context, Result, anyhow};
 use axum::Json;
 use axum::body::Body as AxumBody;
 use axum::extract::State;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{
     Router,
     http::Request,
     response::{IntoResponse, Response as AxumResponse},
 };
+use axum_prometheus::PrometheusMetricLayer;
 use axum_server::tls_rustls::RustlsConfig;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
+use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::sync::Mutex as TokioMutex;
 use tower_http::trace::TraceLayer;
 
@@ -24,8 +26,9 @@ use crate::adapters::http_client::HyperHttpClient;
 use crate::adapters::http_handler::HyperHandler;
 use crate::config::models::ServerConfig;
 use crate::core::ProxyService;
+use crate::metrics::{RequestTimer, increment_request_total};
 use crate::ports::http_server::{HandlerError, HttpHandler, HttpServer};
-use crate::utils::health_checker_utils::spawn_health_checker_task;
+use crate::utils::health_checker_utils::spawn_health_checker_task; // Added
 
 // Define a struct to hold all shared state for Axum handlers
 #[derive(Clone)]
@@ -39,6 +42,8 @@ struct AppState {
 
 pub struct HyperServer {
     app_state: AppState,
+    prometheus_layer: PrometheusMetricLayer<'static>,
+    prometheus_handle: PrometheusHandle, // Changed type
 }
 
 impl HyperServer {
@@ -49,6 +54,7 @@ impl HyperServer {
         file_system: Arc<TowerFileSystem>,
         health_checker_handle: Arc<TokioMutex<Option<tokio::task::JoinHandle<()>>>>,
     ) -> Self {
+        let (prometheus_layer, prometheus_handle) = PrometheusMetricLayer::pair();
         Self {
             app_state: AppState {
                 proxy_service_holder,
@@ -57,24 +63,45 @@ impl HyperServer {
                 file_system,
                 health_checker_handle,
             },
+            prometheus_layer,
+            prometheus_handle,
         }
     }
 
     async fn build_app(&self) -> Router {
-        // Note: HyperHandler will be modified to take Arc<RwLock<Arc<ProxyService>>>
-        // So it can access the latest proxy_service internally on each request.
-        // The instance of HyperHandler itself can be cloned.
         let general_handler = HyperHandler::new(
             self.app_state.proxy_service_holder.clone(),
             self.app_state.http_client.clone(),
             self.app_state.file_system.clone(),
         );
 
+        let metrics_handle_for_route = self.prometheus_handle.clone();
+
         Router::new()
-            // TODO: Secure this endpoint. Add authentication/authorization.
             .route("/-/config", post(update_config_handler))
-            .fallback(move |req: Request<AxumBody>| handle_request(general_handler.clone(), req))
+            .route(
+                "/metrics",
+                get(move || async move { metrics_handle_for_route.render() }),
+            )
+            .fallback(move |req: Request<AxumBody>| async move {
+                let path = req.uri().path().to_string();
+                let method = req.method().to_string();
+
+                // Timer will record duration when dropped
+                let _timer = RequestTimer::new(path.clone(), method.clone());
+
+                // Await the actual response. Since the error type is Infallible,
+                // we can safely unwrap the Result.
+                let response = handle_request(general_handler.clone(), req).await.unwrap();
+
+                // Now 'response' is of type AxumResponse (http::Response<axum::body::Body>)
+                increment_request_total(&path, &method, response.status().as_u16());
+
+                // Return the response. AxumResponse implements IntoResponse.
+                response
+            })
             .with_state(self.app_state.clone())
+            .layer(self.prometheus_layer.clone())
             .layer(TraceLayer::new_for_http())
     }
 }
