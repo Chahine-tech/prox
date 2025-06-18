@@ -12,8 +12,8 @@ use tokio::time::timeout;
 use hyper_rustls::HttpsConnector;
 use rustls_native_certs::load_native_certs;
 
-use crate::ports::http_client::{HttpClient, HttpClientError, HttpClientResult};
-use crate::metrics::{BackendRequestTimer, increment_backend_request_total}; // Added
+use crate::metrics::{BackendRequestTimer, increment_backend_request_total};
+use crate::ports::http_client::{HttpClient, HttpClientError, HttpClientResult}; // Added
 
 /// Custom error type for HTTP client operations
 #[derive(Error, Debug)]
@@ -145,16 +145,18 @@ impl HttpClient for HyperHttpClient {
         let backend_identifier = format!(
             "{}://{}",
             req.uri().scheme_str().unwrap_or("http"),
-            req.uri().authority().map_or_else(|| "unknown".to_string(), |a| a.to_string())
+            req.uri()
+                .authority()
+                .map_or_else(|| "unknown".to_string(), |a| a.to_string())
         );
         let request_path = req.uri().path().to_string();
         let request_method = req.method().to_string();
 
         // Start timer for backend request duration
         let _backend_timer = BackendRequestTimer::new(
-            backend_identifier.clone(), 
-            request_path.clone(), 
-            request_method.clone()
+            backend_identifier.clone(),
+            request_path.clone(),
+            request_method.clone(),
         );
 
         if let Some(host_str) = req.uri().host() {
