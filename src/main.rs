@@ -8,10 +8,7 @@ use notify::{RecursiveMode, Watcher};
 use std::path::Path;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 
-// Corrected imports for tracing-subscriber
-use tracing_subscriber::fmt::format::FmtSpan; // For span events configuration
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{EnvFilter, Registry, fmt}; // Registry for subscriber // For .json() method via Layer
+// Registry for subscriber // For .json() method via Layer
 
 // Import directly from crate root where they are re-exported
 use prox::{
@@ -23,6 +20,7 @@ use prox::{
     config::loader::load_config,
     // config::models::ServerConfig, // Removed unused import
     ports::http_server::HttpServer,
+    tracing_setup,                                          // Added
     utils::health_checker_utils::spawn_health_checker_task, // Import shared helper
 };
 
@@ -53,21 +51,8 @@ async fn main() -> Result<()> {
         tracing::info!("Successfully installed aws-lc-rs as the default crypto provider.");
     }
 
-    // Configure tracing_subscriber for JSON output
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let formatting_layer = fmt::layer()
-        .json() // Enable JSON output
-        .with_span_events(FmtSpan::FULL) // Configure span events (optional)
-        .with_thread_ids(true) // Include thread IDs (optional)
-        .with_thread_names(true) // Include thread names (optional)
-        .with_target(true) // Include the target of the log (module path)
-        .with_file(true) // Include the source file of the log (optional)
-        .with_line_number(true); // Include the line number of the log (optional)
-
-    let subscriber = Registry::default().with(env_filter).with(formatting_layer);
-
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set global default tracing subscriber");
+    // Configure tracing_subscriber for JSON output with OpenTelemetry
+    tracing_setup::init_tracing().expect("Failed to initialize tracing with OpenTelemetry");
 
     let args = Args::parse();
 
@@ -301,6 +286,9 @@ async fn main() -> Result<()> {
     }
 
     server.run().await?;
+
+    // Shutdown tracing on exit
+    tracing_setup::shutdown_tracing();
 
     Ok(())
 }

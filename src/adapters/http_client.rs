@@ -152,6 +152,16 @@ impl HttpClient for HyperHttpClient {
         let request_path = req.uri().path().to_string();
         let request_method = req.method().to_string();
 
+        // Create a tracing span for the backend request
+        let span = tracing::info_span!(
+            "backend_request",
+            backend.url = %backend_identifier,
+            http.method = %request_method,
+            http.path = %request_path,
+            http.status_code = tracing::field::Empty,
+        );
+        let _enter = span.enter();
+
         // Start timer for backend request duration
         let _backend_timer = BackendRequestTimer::new(
             backend_identifier.clone(),
@@ -212,12 +222,17 @@ impl HttpClient for HyperHttpClient {
 
         match response_result {
             Ok(res) => {
+                let status_code = res.status().as_u16();
+
+                // Record status code in the tracing span
+                tracing::Span::current().record("http.status_code", status_code);
+
                 // Increment backend request total counter
                 increment_backend_request_total(
                     &backend_identifier,
                     &request_path,
                     &request_method,
-                    res.status().as_u16(),
+                    status_code,
                 );
 
                 // Convert Hyper response body back to AxumBody
@@ -242,6 +257,9 @@ impl HttpClient for HyperHttpClient {
                 }
             }
             Err(e) => {
+                // Record error status code in the tracing span
+                tracing::Span::current().record("http.status_code", 599u16);
+
                 tracing::error!(
                     "Error making request to backend {} ({} {}): {}",
                     backend_identifier,

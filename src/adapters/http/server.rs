@@ -87,12 +87,25 @@ impl HyperServer {
                 let path = req.uri().path().to_string();
                 let method = req.method().to_string();
 
+                // Create a tracing span for the request
+                let span = tracing::info_span!(
+                    "http_request",
+                    http.method = %method,
+                    http.path = %path,
+                    http.status_code = tracing::field::Empty,
+                );
+
+                let _enter = span.enter();
+
                 // Timer will record duration when dropped
                 let _timer = RequestTimer::new(path.clone(), method.clone());
 
                 // Await the actual response. Since the error type is Infallible,
                 // we can safely unwrap the Result.
                 let response = handle_request(general_handler.clone(), req).await.unwrap();
+
+                // Record the status code in the span
+                tracing::Span::current().record("http.status_code", response.status().as_u16());
 
                 // Now 'response' is of type AxumResponse (http::Response<axum::body::Body>)
                 increment_request_total(&path, &method, response.status().as_u16());
