@@ -1,7 +1,6 @@
 use axum::body::Body as AxumBody;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use hyper::body::Incoming as HyperBodyIncoming;
 use hyper::{Request, Response, Version, header, header::HeaderValue};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -13,7 +12,8 @@ use tokio::time::timeout;
 use hyper_rustls::HttpsConnector;
 use rustls_native_certs::load_native_certs;
 
-use crate::ports::http_client::{HttpClient, HttpClientError, HttpClientResult};
+use crate::metrics::{BackendRequestTimer, increment_backend_request_total};
+use crate::ports::http_client::{HttpClient, HttpClientError, HttpClientResult}; // Added
 
 /// Custom error type for HTTP client operations
 #[derive(Error, Debug)]
@@ -141,6 +141,34 @@ impl HttpClient for HyperHttpClient {
 
         let client = self.client.clone();
 
+        // For backend metrics, we'll use the scheme, host, and port as the backend identifier.
+        let backend_identifier = format!(
+            "{}://{}",
+            req.uri().scheme_str().unwrap_or("http"),
+            req.uri()
+                .authority()
+                .map_or_else(|| "unknown".to_string(), |a| a.to_string())
+        );
+        let request_path = req.uri().path().to_string();
+        let request_method = req.method().to_string();
+
+        // Create a tracing span for the backend request
+        let span = tracing::info_span!(
+            "backend_request",
+            backend.url = %backend_identifier,
+            http.method = %request_method,
+            http.path = %request_path,
+            http.status_code = tracing::field::Empty,
+        );
+        let _enter = span.enter();
+
+        // Start timer for backend request duration
+        let _backend_timer = BackendRequestTimer::new(
+            backend_identifier.clone(),
+            request_path.clone(),
+            request_method.clone(),
+        );
+
         if let Some(host_str) = req.uri().host() {
             let host_header_val = if let Some(port) = req.uri().port() {
                 HeaderValue::from_str(&format!("{}:{}", host_str, port.as_u16()))
@@ -190,39 +218,71 @@ impl HttpClient for HyperHttpClient {
         let method_for_error_log = outgoing_hyper_request.method().clone();
         let uri_for_error_log = outgoing_hyper_request.uri().clone();
 
-        let response: Response<HyperBodyIncoming> =
-            match client.request(outgoing_hyper_request).await {
-                Ok(res) => res,
-                Err(e) => {
-                    // Simplified error logging as e.source() is not directly available for hyper_util::client::legacy::Error
-                    tracing::error!(
-                        "Error making request to {} {}: {}",
-                        method_for_error_log,
-                        uri_for_error_log,
-                        e
-                    );
-                    return Err(HyperClientError::RequestError(format!(
-                        "{} {}: {}",
-                        method_for_error_log, uri_for_error_log, e
-                    ))
-                    .into());
+        let response_result = client.request(outgoing_hyper_request).await;
+
+        match response_result {
+            Ok(res) => {
+                let status_code = res.status().as_u16();
+
+                // Record status code in the tracing span
+                tracing::Span::current().record("http.status_code", status_code);
+
+                // Increment backend request total counter
+                increment_backend_request_total(
+                    &backend_identifier,
+                    &request_path,
+                    &request_method,
+                    status_code,
+                );
+
+                // Convert Hyper response body back to AxumBody
+                let (parts, hyper_body) = res.into_parts();
+                match hyper_body.collect().await {
+                    Ok(collected_body) => {
+                        let axum_body = AxumBody::from(collected_body.to_bytes());
+                        Ok(Response::from_parts(parts, axum_body))
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to collect backend response body for {} {}: {}",
+                            method_for_error_log,
+                            uri_for_error_log,
+                            e
+                        );
+                        Err(HttpClientError::ConnectionError(format!(
+                            "Failed to collect backend response body: {}",
+                            e
+                        )))
+                    }
                 }
-            };
+            }
+            Err(e) => {
+                // Record error status code in the tracing span
+                tracing::Span::current().record("http.status_code", 599u16);
 
-        let status = response.status();
-        if status.is_client_error() || status.is_server_error() {
-            tracing::warn!(
-                "Request to {} {} failed with status: {}",
-                method_for_error_log,
-                uri_for_error_log,
-                status
-            );
+                tracing::error!(
+                    "Error making request to backend {} ({} {}): {}",
+                    backend_identifier,
+                    method_for_error_log,
+                    uri_for_error_log,
+                    e
+                );
+                // Increment backend request total counter even for errors from the client itself (e.g., connection refused)
+                // We might use a special status code like 0 or a specific error code if available.
+                // For now, let's use 599 as a generic client-side error indicator for metrics.
+                increment_backend_request_total(
+                    &backend_identifier,
+                    &request_path,
+                    &request_method,
+                    599, // Custom status code for client errors
+                );
+                Err(HyperClientError::RequestError(format!(
+                    "Request to {} {} failed: {}",
+                    method_for_error_log, uri_for_error_log, e
+                ))
+                .into())
+            }
         }
-
-        let (response_parts, hyper_body) = response.into_parts();
-        let axum_body_response = AxumBody::new(hyper_body.map_err(axum::BoxError::from));
-
-        Ok(Response::from_parts(response_parts, axum_body_response))
     }
 
     async fn health_check(&self, url: &str, timeout_secs: u64) -> HttpClientResult<bool> {

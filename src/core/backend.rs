@@ -1,4 +1,5 @@
 use crate::config::HealthStatus;
+use crate::metrics::set_backend_health_status;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
@@ -88,6 +89,7 @@ impl fmt::Display for BackendUrl {
 /// Tracks the health status of a backend
 #[derive(Debug)]
 pub struct BackendHealth {
+    target_url: BackendUrl, // Added field to store the target URL
     /// Current health status (uses atomic for thread safety)
     status: AtomicU8, // Uses HEALTH_STATUS_* constants
     /// Counter for consecutive successful health checks
@@ -104,8 +106,10 @@ impl BackendHealth {
     ///
     /// # Returns
     /// A new BackendHealth instance initialized as healthy
-    pub fn new(_target: BackendUrl) -> Self {
+    pub fn new(target: BackendUrl) -> Self {
+        // Modified to accept and store target_url
         Self {
+            target_url: target,
             status: AtomicU8::new(HEALTH_STATUS_HEALTHY), // Start as healthy
             consecutive_successes: AtomicU32::new(0),
             consecutive_failures: AtomicU32::new(0),
@@ -135,6 +139,7 @@ impl BackendHealth {
         let current = self.consecutive_successes.load(Ordering::Relaxed);
         self.consecutive_successes
             .store(current + 1, Ordering::Release);
+        set_backend_health_status(self.target_url.as_str(), true); // Uncommented and using target_url
     }
 
     /// Mark the backend as unhealthy and reset success count
@@ -148,6 +153,7 @@ impl BackendHealth {
         let current = self.consecutive_failures.load(Ordering::Relaxed);
         self.consecutive_failures
             .store(current + 1, Ordering::Release);
+        set_backend_health_status(self.target_url.as_str(), false); // Uncommented and using target_url
     }
 
     /// Get the number of consecutive successful health checks
@@ -214,7 +220,7 @@ mod tests {
     fn test_backend_health_transitions() {
         let url = BackendUrl::new("http://example.com")
             .expect("Creating BackendUrl for health test should succeed");
-        let health = BackendHealth::new(url);
+        let health = BackendHealth::new(url.clone()); // Pass clone of url if BackendHealth takes ownership, or just url if it takes a ref or copies
 
         // Initial state
         assert_eq!(health.status(), HealthStatus::Healthy);

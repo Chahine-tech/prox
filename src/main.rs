@@ -8,6 +8,8 @@ use notify::{RecursiveMode, Watcher};
 use std::path::Path;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 
+// Registry for subscriber // For .json() method via Layer
+
 // Import directly from crate root where they are re-exported
 use prox::{
     // HealthChecker, // Removed unused import
@@ -18,6 +20,7 @@ use prox::{
     config::loader::load_config,
     // config::models::ServerConfig, // Removed unused import
     ports::http_server::HttpServer,
+    tracing_setup,                                          // Added
     utils::health_checker_utils::spawn_health_checker_task, // Import shared helper
 };
 
@@ -48,7 +51,9 @@ async fn main() -> Result<()> {
         tracing::info!("Successfully installed aws-lc-rs as the default crypto provider.");
     }
 
-    tracing_subscriber::fmt::init();
+    // Configure tracing_subscriber for JSON output with OpenTelemetry
+    tracing_setup::init_tracing().expect("Failed to initialize tracing with OpenTelemetry");
+
     let args = Args::parse();
 
     tracing::info!("Loading initial configuration from {}", args.config);
@@ -281,6 +286,9 @@ async fn main() -> Result<()> {
     }
 
     server.run().await?;
+
+    // Shutdown tracing on exit
+    tracing_setup::shutdown_tracing();
 
     Ok(())
 }

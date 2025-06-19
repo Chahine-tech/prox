@@ -8,8 +8,10 @@
 /// - Path-based routing
 // Re-export public modules with explicit visibility controls
 pub mod config;
+pub mod metrics;
 pub mod ports;
-pub mod utils; // Add this line
+pub mod tracing_setup;
+pub mod utils; // Added
 
 // These modules are implementation details and should not be directly used by users
 pub(crate) mod adapters;
