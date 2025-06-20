@@ -3,9 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
-use futures_util::stream::StreamExt;
-use signal_hook::consts::{SIGINT, SIGTERM, SIGUSR1};
-use signal_hook_tokio::Signals;
+use tokio::signal;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
 
@@ -71,56 +69,71 @@ impl GracefulShutdown {
 
     /// Start listening for OS signals and manage shutdown process
     pub async fn run_signal_handler(&self) -> Result<()> {
-        let mut signals = Signals::new([SIGTERM, SIGINT, SIGUSR1])?;
-        let shutdown_tx = self.shutdown_tx.clone();
-        let shutdown_initiated = self.shutdown_initiated.clone();
-
         tracing::info!(
             "Signal handler started. Listening for SIGTERM, SIGINT (graceful shutdown) and SIGUSR1 (restart)"
         );
 
-        while let Some(signal) = signals.next().await {
-            let reason = match signal {
-                SIGTERM | SIGINT => {
-                    tracing::info!(
-                        "Received shutdown signal ({}), initiating graceful shutdown...",
-                        if signal == SIGTERM {
-                            "SIGTERM"
-                        } else {
-                            "SIGINT"
-                        }
-                    );
-                    ShutdownReason::Graceful
-                }
-                SIGUSR1 => {
-                    tracing::info!(
-                        "Received restart signal (SIGUSR1), initiating graceful restart..."
-                    );
-                    ShutdownReason::Restart
-                }
-                _ => continue,
-            };
-
-            // Only handle the first signal, ignore subsequent ones
-            if shutdown_initiated
-                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                tracing::info!("Processing shutdown signal: {:?}", reason);
-                let _ = shutdown_tx.send(reason.clone());
-
-                // For restart signals, we might want to continue listening
-                // but for now, we'll break and let the application handle the restart logic
-                if matches!(reason, ShutdownReason::Graceful) {
-                    break;
-                }
-            } else {
-                tracing::warn!("Shutdown already in progress, ignoring additional signal");
+        // Handle different signals concurrently
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                tracing::info!("Received SIGINT (Ctrl+C), initiating graceful shutdown...");
+                self.initiate_shutdown(ShutdownReason::Graceful);
+            }
+            _ = self.wait_for_sigterm() => {
+                tracing::info!("Received SIGTERM, initiating graceful shutdown...");
+                self.initiate_shutdown(ShutdownReason::Graceful);
+            }
+            _ = self.wait_for_sigusr1() => {
+                tracing::info!("Received SIGUSR1, initiating graceful restart...");
+                self.initiate_shutdown(ShutdownReason::Restart);
             }
         }
 
         tracing::info!("Signal handler shutting down");
         Ok(())
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_sigterm(&self) {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
+        sigterm.recv().await;
+    }
+
+    #[cfg(not(unix))]
+    async fn wait_for_sigterm(&self) {
+        // On non-Unix systems, we only have Ctrl+C
+        std::future::pending::<()>().await;
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_sigusr1(&self) {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigusr1 =
+            signal(SignalKind::user_defined1()).expect("Failed to register SIGUSR1 handler");
+        sigusr1.recv().await;
+    }
+
+    #[cfg(not(unix))]
+    async fn wait_for_sigusr1(&self) {
+        // On non-Unix systems, SIGUSR1 is not available
+        std::future::pending::<()>().await;
+    }
+
+    fn initiate_shutdown(&self, reason: ShutdownReason) {
+        if self
+            .shutdown_initiated
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            tracing::info!("Processing shutdown signal: {:?}", reason);
+            if let Err(e) = self.shutdown_tx.send(reason) {
+                tracing::error!("Failed to send shutdown signal: {}", e);
+            }
+        } else {
+            tracing::warn!("Shutdown already initiated, ignoring signal");
+        }
     }
 
     /// Wait for shutdown with timeout, returns the reason for shutdown
