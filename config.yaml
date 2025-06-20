@@ -32,8 +32,6 @@ backend_health_paths:
   "https://postman-echo.com": "/get"
   "https://jsonplaceholder.typicode.com": "/todos/1"
 
-metrics:
-  enabled: true
 
 routes:
   "/":  # Add root route that redirects to /static
