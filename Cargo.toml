@@ -48,6 +48,10 @@ hyper-util = { version = "0.1", features = ["full"]}
 
 # Rate limiting dependencies
 governor = "0.10.0"
+
+# Graceful shutdown dependencies
+signal-hook = "0.3"
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 humantime = "2.1.0"
 chrono = { version = "0.4", features = ["serde"] } 
 regex = "1"

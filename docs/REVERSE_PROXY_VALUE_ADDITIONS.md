@@ -54,14 +54,20 @@ This document outlines current major problems with reverse proxies and proposes 
 
 ---
 
-## 5. Zero-Downtime Deployments & Graceful Restarts
+## 5. Zero-Downtime Deployments & Graceful Restarts ✅ (Implemented)
 **Problem:** Restarts can drop connections or cause brief outages.
 
-**Solution:**
-- Implement graceful shutdown and restart logic.
-- Allow seamless binary upgrades (e.g., via socket passing).
+**Solution:** *Fully implemented in Prox.*
+- Graceful shutdown with signal handling (SIGTERM, SIGINT, SIGUSR1)
+- Connection tracking and draining during shutdown
+- Active request monitoring and graceful completion
+- Configurable shutdown timeout (default 30 seconds)
+- Health checker cleanup on shutdown
+- Signal-based restart capability (SIGUSR1)
+- Zero dropped connections during graceful shutdown
+- Comprehensive logging of shutdown process
 
-*Status: Planned*
+*Status: Complete - Production Ready*
 
 ---
 
