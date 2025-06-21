@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "rules/*.yml"
+
+scrape_configs:
+  - job_name: 'prox'
+    static_configs:
+      - targets: ['host.docker.internal:3000']  # Access host from Docker container
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+    scrape_timeout: 4s  # Must be less than scrape_interval
+    scheme: https  # Since you have TLS enabled
+    tls_config:
+      insecure_skip_verify: true  # Skip cert verification for self-signed certs
