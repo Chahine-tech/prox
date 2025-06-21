@@ -57,6 +57,8 @@ src/
 │   ├── health_checker.rs # Health checking implementation
 │   └── mod.rs
 ├── utils/                # Utility functions
+│   ├── connection_tracker.rs # Connection tracking utilities
+│   ├── graceful_shutdown.rs  # Graceful shutdown handling
 │   ├── health_checker_utils.rs # Utilities for health checking
 │   └── mod.rs
 ```
