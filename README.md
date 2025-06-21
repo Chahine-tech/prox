@@ -11,6 +11,7 @@ Prox is a lightweight reverse proxy built in Rust, implementing a hexagonal arch
 - Path Rewriting for proxy and load-balanced routes
 - Health checking for backend services
 - Rate limiting (by IP, header, or route-wide) with configurable limits and responses
+- **Production-grade monitoring** with Prometheus metrics and Grafana dashboards
 - Configurable via YAML
 - Custom error handling with type safety
 - Browser-like request headers for improved compatibility
@@ -56,6 +57,8 @@ src/
 │   ├── health_checker.rs # Health checking implementation
 │   └── mod.rs
 ├── utils/                # Utility functions
+│   ├── connection_tracker.rs # Connection tracking utilities
+│   ├── graceful_shutdown.rs  # Graceful shutdown handling
 │   ├── health_checker_utils.rs # Utilities for health checking
 │   └── mod.rs
 ```
@@ -278,6 +281,52 @@ curl -k https://127.0.0.1:3000/balance/get
 ```
 
 Note: The `-k` flag is used to skip certificate validation for self-signed certificates.
+
+## Monitoring & Observability
+
+Prox includes built-in Prometheus metrics and can be easily monitored with a complete Grafana dashboard setup.
+
+### Metrics Endpoint
+
+Prox exposes metrics at `https://localhost:3000/metrics` including:
+- Request rates and response times
+- Active connections and backend health
+- Error rates and status code distributions
+- Rate limiting statistics
+
+### Complete Monitoring Stack
+
+Set up production-grade monitoring with Prometheus and Grafana:
+
+📊 **[Complete Monitoring Stack Setup Guide](docs/MONITORING_STACK_SETUP.md)**
+
+This guide includes:
+- Docker Compose setup for Prometheus and Grafana
+- Pre-configured dashboards and panels
+- Alerting rules and best practices
+- Troubleshooting and performance tuning
+- Production deployment considerations
+
+**Quick Start:**
+```bash
+# Start monitoring stack
+docker-compose up -d
+
+# Start Prox with metrics
+cargo run
+
+# Access Grafana dashboards
+open http://localhost:3001  # admin/admin
+```
+
+### Available Metrics
+
+Key metrics exposed by Prox:
+- `prox_requests_total` - Total number of requests by endpoint, method, and status
+- `prox_request_duration_seconds` - Request duration histogram
+- `prox_active_connections` - Current active connections
+- `prox_backend_health_status` - Backend server health status
+- `prox_rate_limit_hits_total` - Rate limiting statistics
 
 ## License
 

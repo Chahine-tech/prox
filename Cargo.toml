@@ -48,6 +48,7 @@ hyper-util = { version = "0.1", features = ["full"]}
 
 # Rate limiting dependencies
 governor = "0.10.0"
+
 humantime = "2.1.0"
 chrono = { version = "0.4", features = ["serde"] } 
 regex = "1"

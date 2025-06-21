@@ -8,20 +8,10 @@ use notify::{RecursiveMode, Watcher};
 use std::path::Path;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 
-// Registry for subscriber // For .json() method via Layer
-
-// Import directly from crate root where they are re-exported
 use prox::{
-    // HealthChecker, // Removed unused import
-    HyperHttpClient,
-    HyperServer,
-    ProxyService,
-    TowerFileSystem,
-    config::loader::load_config,
-    // config::models::ServerConfig, // Removed unused import
-    ports::http_server::HttpServer,
-    tracing_setup,                                          // Added
-    utils::health_checker_utils::spawn_health_checker_task, // Import shared helper
+    HealthChecker, HyperHttpClient, HyperServer, ProxyService, TowerFileSystem,
+    config::loader::load_config, config::models::ServerConfig, ports::http_server::HttpServer,
+    tracing_setup, utils::graceful_shutdown::GracefulShutdown,
 };
 
 #[derive(Parser, Debug)]
@@ -57,7 +47,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     tracing::info!("Loading initial configuration from {}", args.config);
-    let initial_server_config_data = load_config(&args.config)
+    let initial_server_config_data: ServerConfig = load_config(&args.config)
         .await
         .with_context(|| format!("Failed to load initial config from {}", args.config))?;
 
@@ -80,13 +70,25 @@ async fn main() -> Result<()> {
         let current_config = config_holder.read().unwrap().clone();
         if current_config.health_check.enabled {
             tracing::info!("Starting initial health checker...");
-            *handle_guard = Some(spawn_health_checker_task(
-                // Use shared helper
+
+            // Create HealthChecker directly instead of using utility function
+            let health_checker = HealthChecker::new(
                 proxy_service_holder.read().unwrap().clone(),
                 http_client.clone(),
-                current_config.clone(),
-                "Initial".to_string(), // Pass as String
-            ));
+            );
+
+            *handle_guard = Some(tokio::spawn(async move {
+                tracing::info!(
+                    "Initial health checker task started. Interval: {}s, Path: {}, Unhealthy Threshold: {}, Healthy Threshold: {}",
+                    current_config.health_check.interval_secs,
+                    current_config.health_check.path,
+                    current_config.health_check.unhealthy_threshold,
+                    current_config.health_check.healthy_threshold
+                );
+                if let Err(e) = health_checker.run().await {
+                    tracing::error!("Initial health checker run error: {}", e);
+                }
+            }));
         } else {
             tracing::info!("Initial configuration has health checking disabled.");
         }
@@ -199,7 +201,7 @@ async fn main() -> Result<()> {
             );
             match load_config(&config_path_for_watcher).await {
                 Ok(new_config_data) => {
-                    let new_config_arc = Arc::new(new_config_data);
+                    let new_config_arc: Arc<ServerConfig> = Arc::new(new_config_data);
                     tracing::info!("Successfully loaded new configuration.");
 
                     {
@@ -229,13 +231,26 @@ async fn main() -> Result<()> {
                         tracing::info!(
                             "Starting new health checker task with updated configuration..."
                         );
-                        *handle_guard = Some(spawn_health_checker_task(
-                            // Use shared helper
-                            new_proxy_service.clone(), // Use the new proxy service
+
+                        // Create HealthChecker directly instead of using utility function
+                        let health_checker = HealthChecker::new(
+                            new_proxy_service.clone(),
                             http_client_for_watcher.clone(),
-                            new_config_arc.clone(), // Pass the new config snapshot
-                            "File Reload".to_string(), // Pass as String
-                        ));
+                        );
+                        let config_for_logging = new_config_arc.clone();
+
+                        *handle_guard = Some(tokio::spawn(async move {
+                            tracing::info!(
+                                "File Reload health checker task started. Interval: {}s, Path: {}, Unhealthy Threshold: {}, Healthy Threshold: {}",
+                                config_for_logging.health_check.interval_secs,
+                                config_for_logging.health_check.path,
+                                config_for_logging.health_check.unhealthy_threshold,
+                                config_for_logging.health_check.healthy_threshold
+                            );
+                            if let Err(e) = health_checker.run().await {
+                                tracing::error!("File Reload health checker run error: {}", e);
+                            }
+                        }));
                     } else {
                         tracing::info!(
                             "Health checking is disabled in the new configuration. Not starting health checker task."
@@ -258,6 +273,17 @@ async fn main() -> Result<()> {
         tracing::info!("File watcher task is shutting down.");
     });
 
+    // Create graceful shutdown manager
+    let graceful_shutdown = Arc::new(GracefulShutdown::new());
+
+    // Start signal handler for graceful shutdown
+    let signal_handler_shutdown = graceful_shutdown.clone();
+    tokio::spawn(async move {
+        if let Err(e) = signal_handler_shutdown.run_signal_handler().await {
+            tracing::error!("Signal handler error: {}", e);
+        }
+    });
+
     // Create the HTTP server
     let server = HyperServer::with_dependencies(
         proxy_service_holder.clone(),
@@ -265,6 +291,7 @@ async fn main() -> Result<()> {
         http_client.clone(),
         file_system.clone(),
         health_checker_handle_arc_mutex.clone(), // Pass the health checker handle
+        graceful_shutdown.clone(),
     );
 
     // Log initial routes from the config_holder
@@ -285,7 +312,25 @@ async fn main() -> Result<()> {
         );
     }
 
-    server.run().await?;
+    // Run the server and wait for shutdown
+    let server_result = tokio::select! {
+        result = server.run() => result,
+        shutdown_reason = graceful_shutdown.wait_for_shutdown_signal() => {
+            tracing::info!("Shutdown signal received: {:?}", shutdown_reason);
+
+            // Cleanup health checker
+            let mut handle_guard = health_checker_handle_arc_mutex.lock().await;
+            if let Some(health_handle) = handle_guard.take() {
+                tracing::info!("Shutting down health checker...");
+                health_handle.abort();
+            }
+
+            tracing::info!("Graceful shutdown completed");
+            Ok(())
+        }
+    };
+
+    server_result?;
 
     // Shutdown tracing on exit
     tracing_setup::shutdown_tracing();

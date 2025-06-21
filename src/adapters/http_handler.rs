@@ -753,15 +753,32 @@ impl HyperHandler {
         route_path: &str,
         config: &RateLimitConfig,
     ) -> Result<Arc<RouteRateLimiter>, AxumResponse> {
+        // Create a cache key that includes the config details to ensure cache invalidation
+        // when configuration changes
+        let cache_key = format!(
+            "{}:{:?}:{}:{}:{}:{}",
+            route_path,
+            config.by,
+            config.requests,
+            config.period,
+            config.status_code,
+            config.message
+        );
+
+        tracing::debug!("Rate limiter cache key: {}", cache_key);
+
         let mut limiters = self.rate_limiters.lock().await;
-        if let Some(limiter) = limiters.get(route_path) {
+        if let Some(limiter) = limiters.get(&cache_key) {
+            tracing::debug!("Rate limiter cache HIT for key: {}", cache_key);
             return Ok(limiter.clone());
         }
+
+        tracing::debug!("Rate limiter cache MISS for key: {}", cache_key);
 
         match RouteRateLimiter::new(config) {
             Ok(limiter) => {
                 let arc_limiter = Arc::new(limiter);
-                limiters.insert(route_path.to_string(), arc_limiter.clone());
+                limiters.insert(cache_key, arc_limiter.clone());
                 Ok(arc_limiter)
             }
             Err(e) => {
