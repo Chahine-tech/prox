@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prox-ingress
+  namespace: default
+  annotations:
+    # For nginx ingress controller
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    # For cert-manager (optional)
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: prox.local  # Change this to your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prox-service
+            port:
+              number: 80
+  # tls:  # Uncomment for HTTPS
+  # - hosts:
+  #   - prox.local
+  #   secretName: prox-tls
