@@ -1,0 +1,20 @@
+# Docker ignore file for prox
+target/
+.git/
+.github/
+docs/
+*.md
+.gitignore
+
+# Local development files that shouldn't be in the container
+test_*.sh
+setup-*.sh
+deploy-manual.sh
+
+# Logs and temporary files
+*.log
+*.tmp
+.DS_Store
+
+# Remove certs from ignore since we want to handle this in Dockerfile
+# certs/
