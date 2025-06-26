@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prox
+  namespace: default
+  labels:
+    app: prox
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: prox
+  template:
+    metadata:
+      labels:
+        app: prox
+    spec:
+      containers:
+      - name: prox
+        image: ghcr.io/chahinebt/prox:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: https
+          protocol: TCP
+        # Override the config file with ConfigMap
+        command: ["/usr/local/bin/prox"]
+        args: ["--config", "/app/config/config.yaml"]
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        # Resource limits
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        # Security context
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config-volume
+        configMap:
+          name: prox-config
+      # Security context for the pod
+      securityContext:
+        fsGroup: 1001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prox-service
+  namespace: default
+  labels:
+    app: prox
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 443
+    targetPort: 8080
+    protocol: TCP
+    name: https
+  selector:
+    app: prox
