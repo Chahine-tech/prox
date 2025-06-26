@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: prox
-        image: ghcr.io/chahinebt/prox:latest
+        image: ghcr.io/chahine-tech/prox:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8080

@@ -89,7 +89,8 @@ jobs:
       - name: Build and push Docker image
         run: |
           # Build and push to GitHub Container Registry
-          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/prox"
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')Add commentMore actions
+          IMAGE_NAME="ghcr.io/${REPO_OWNER}/prox"
           IMAGE_TAG="${IMAGE_NAME}:main-${{ github.sha }}"
           LATEST_TAG="${IMAGE_NAME}:latest"
           
