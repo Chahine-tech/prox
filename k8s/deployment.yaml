@@ -71,6 +71,8 @@ spec:
       - name: config-volume
         configMap:
           name: prox-config
+      imagePullSecrets:
+      - name: ghcr-secret
       # Security context for the pod
       securityContext:
         fsGroup: 1001

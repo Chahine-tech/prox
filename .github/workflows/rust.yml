@@ -89,20 +89,36 @@ jobs:
       - name: Build and push Docker image
         run: |
           # Build and push to GitHub Container Registry
-          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')Add commentMore actions
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           IMAGE_NAME="ghcr.io/${REPO_OWNER}/prox"
           IMAGE_TAG="${IMAGE_NAME}:main-${{ github.sha }}"
           LATEST_TAG="${IMAGE_NAME}:latest"
           
+          echo "Building Docker image..."
           docker build -t "${IMAGE_TAG}" -t "${LATEST_TAG}" .
+          
+          echo "Pushing Docker images..."
           docker push "${IMAGE_TAG}"
           docker push "${LATEST_TAG}"
           
-          echo "✅ Docker images built and pushed successfully to GHCR!"
+          echo "Docker images built and pushed successfully to GHCR!"
           echo "Image tags:"
           echo "  - ${IMAGE_TAG}"
           echo "  - ${LATEST_TAG}"
           
           echo ""
-          echo "🚀 To deploy to Kubernetes, run locally:"
-          echo "  ./k8s/deploy.sh"
+          echo "To deploy to Kubernetes, run locally:"
+          echo "  ./k8s/deploy.sh ${IMAGE_TAG}"
+          
+      - name: Update deployment image reference
+        run: |
+          # Create a deployment artifact with the correct image reference
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME="ghcr.io/${REPO_OWNER}/prox"
+          IMAGE_TAG="${IMAGE_NAME}:main-${{ github.sha }}"
+          
+          echo "Creating deployment artifact with image: ${IMAGE_TAG}"
+          sed "s|ghcr.io/chahine-tech/prox:latest|${IMAGE_TAG}|g" k8s/deployment.yaml > k8s/deployment-ci.yaml
+          
+          echo "Deployment file created for CI/CD:"
+          cat k8s/deployment-ci.yaml | grep "image:"
