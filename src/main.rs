@@ -17,12 +17,50 @@ use prox::{
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
 struct Args {
+    #[clap(subcommand)]
+    command: Option<Commands>,
+
     #[clap(short, long, default_value = "config.yaml")]
     config: String,
 }
 
+#[derive(Parser, Debug)]
+enum Commands {
+    /// Validate configuration file
+    Validate {
+        /// Configuration file to validate
+        #[clap(short, long, default_value = "config.yaml")]
+        config: String,
+    },
+    /// Start the proxy server (default)
+    Serve {
+        /// Configuration file to use
+        #[clap(short, long, default_value = "config.yaml")]
+        config: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+
+    // Determine the command to run
+    let (command, config_path) = match args.command {
+        Some(Commands::Validate { config }) => ("validate", config),
+        Some(Commands::Serve { config }) => ("serve", config),
+        None => ("serve", args.config), // Default to serve with config from args
+    };
+
+    match command {
+        "validate" => {
+            return validate_config_command(&config_path).await;
+        }
+        "serve" => {
+            // Continue with normal server startup
+        }
+        _ => unreachable!(),
+    }
+
     // Install the crypto provider first thing.
     // Get the aws-lc-rs provider instance.
     let provider = rustls::crypto::aws_lc_rs::default_provider();
@@ -44,12 +82,10 @@ async fn main() -> Result<()> {
     // Configure tracing_subscriber for JSON output with OpenTelemetry
     tracing_setup::init_tracing().expect("Failed to initialize tracing with OpenTelemetry");
 
-    let args = Args::parse();
-
-    tracing::info!("Loading initial configuration from {}", args.config);
-    let initial_server_config_data: ServerConfig = load_config(&args.config)
+    tracing::info!("Loading initial configuration from {config_path}");
+    let initial_server_config_data: ServerConfig = load_config(&config_path)
         .await
-        .with_context(|| format!("Failed to load initial config from {}", args.config))?;
+        .with_context(|| format!("Failed to load initial config from {config_path}"))?;
 
     let initial_config_arc = Arc::new(initial_server_config_data);
     let config_holder = Arc::new(RwLock::new(initial_config_arc.clone()));
@@ -95,7 +131,7 @@ async fn main() -> Result<()> {
     }
 
     // File Watcher Task
-    let config_path_for_watcher = args.config.clone();
+    let config_path_for_watcher = config_path.clone();
     let config_holder_clone = config_holder.clone();
     let proxy_service_holder_clone = proxy_service_holder.clone();
     let http_client_for_watcher = http_client.clone();
@@ -336,4 +372,58 @@ async fn main() -> Result<()> {
     tracing_setup::shutdown_tracing();
 
     Ok(())
+}
+
+/// Validate configuration file and exit
+async fn validate_config_command(config_path: &str) -> Result<()> {
+    use prox::config::loader::load_config_unchecked;
+    use prox::config::validation::ConfigValidator;
+
+    println!("🔍 Validating configuration file: {config_path}");
+
+    // First check if file exists and is readable
+    if !Path::new(config_path).exists() {
+        eprintln!("❌ Error: Configuration file '{config_path}' not found");
+        std::process::exit(1);
+    }
+
+    // Try to parse the YAML
+    let config = match load_config_unchecked(config_path).await {
+        Ok(config) => {
+            println!("✅ YAML parsing: OK");
+            config
+        }
+        Err(e) => {
+            eprintln!("❌ YAML parsing failed:");
+            eprintln!("   {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // Validate the configuration
+    match ConfigValidator::validate(&config) {
+        Ok(()) => {
+            println!("✅ Configuration validation: OK");
+            println!();
+            println!("📋 Configuration Summary:");
+            println!("   • Listen Address: {}", config.listen_addr);
+            println!("   • Routes: {}", config.routes.len());
+            println!("   • TLS Enabled: {}", config.tls.is_some());
+            println!("   • Health Checks: {}", config.health_check.enabled);
+            println!();
+            println!("🎉 Configuration is valid and ready to use!");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Configuration validation failed:");
+            eprintln!("{e}");
+            println!();
+            println!("💡 Common fixes:");
+            println!("   • Ensure all URLs start with http:// or https://");
+            println!("   • Check that file paths exist");
+            println!("   • Verify listen address format (e.g., '127.0.0.1:3000')");
+            println!("   • Ensure rate limit periods use valid units (s, m, h)");
+            std::process::exit(1);
+        }
+    }
 }
