@@ -725,9 +725,7 @@ impl HyperHandler {
                         };
                         Response::builder()
                             .status(status_code)
-                            .body(AxumBody::from(format!(
-                                "Load balanced request failed: {e}"
-                            )))
+                            .body(AxumBody::from(format!("Load balanced request failed: {e}")))
                             .unwrap()
                     }
                 }
