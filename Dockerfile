@@ -26,48 +26,31 @@ COPY src ./src
 RUN rm -f target/release/prox target/release/deps/prox* # Clean previous build artifacts
 RUN cargo +nightly build --release --locked
 
-# Stage 2: Final image
-FROM debian:bookworm-slim
+# Stage 2: Final image - Using distroless for security
+FROM gcr.io/distroless/cc-debian12
 
-# Arguments for user and group
-ARG APP_USER=proxuser
-ARG APP_GROUP=proxgroup
-ARG APP_UID=1001
-ARG APP_GID=1001
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create a non-root user and group
-RUN groupadd -g ${APP_GID} ${APP_GROUP} \
-    && useradd -u ${APP_UID} -g ${APP_GROUP} -s /bin/false -m ${APP_USER}
+# Arguments for user and group (distroless already has nonroot user)
+ARG APP_USER=nonroot
+ARG APP_GROUP=nonroot
 
 # Set working directory
 WORKDIR /app
 
-# Copy the compiled binary from the builder stage
-COPY --from=builder /usr/src/prox/target/release/prox /usr/local/bin/prox
+# Copy the compiled binary from the builder stage with executable permissions
+COPY --from=builder --chmod=755 /usr/src/prox/target/release/prox ./prox
 
 # Copy configuration and static files
 COPY config.yaml ./config.yaml
 COPY static ./static
 COPY certs ./certs
 
-# Ensure the non-root user can access necessary files/directories
-# Create directories if they might not exist and set ownership
-RUN mkdir -p /app/static /app/certs \
-    && chown -R ${APP_USER}:${APP_GROUP} /app \
-    && chmod -R 755 /app
-
-# Switch to the non-root user
-USER ${APP_USER}:${APP_GROUP}
+# Switch to the non-root user (distroless already provides nonroot user)
+USER nonroot:nonroot
 
 # Expose the port the application listens on
 EXPOSE 8080
 EXPOSE 8443
 
 # Command to run the application
-ENTRYPOINT ["/usr/local/bin/prox"]
+ENTRYPOINT ["./prox"]
 CMD ["--config", "config.yaml"]
