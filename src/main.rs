@@ -82,10 +82,10 @@ async fn main() -> Result<()> {
     // Configure tracing_subscriber for JSON output with OpenTelemetry
     tracing_setup::init_tracing().expect("Failed to initialize tracing with OpenTelemetry");
 
-    tracing::info!("Loading initial configuration from {}", config_path);
+    tracing::info!("Loading initial configuration from {config_path}");
     let initial_server_config_data: ServerConfig = load_config(&config_path)
         .await
-        .with_context(|| format!("Failed to load initial config from {}", config_path))?;
+        .with_context(|| format!("Failed to load initial config from {config_path}"))?;
 
     let initial_config_arc = Arc::new(initial_server_config_data);
     let config_holder = Arc::new(RwLock::new(initial_config_arc.clone()));
@@ -379,11 +379,11 @@ async fn validate_config_command(config_path: &str) -> Result<()> {
     use prox::config::loader::load_config_unchecked;
     use prox::config::validation::ConfigValidator;
 
-    println!("🔍 Validating configuration file: {}", config_path);
+    println!("🔍 Validating configuration file: {config_path}");
 
     // First check if file exists and is readable
     if !Path::new(config_path).exists() {
-        eprintln!("❌ Error: Configuration file '{}' not found", config_path);
+        eprintln!("❌ Error: Configuration file '{config_path}' not found");
         std::process::exit(1);
     }
 
@@ -395,7 +395,7 @@ async fn validate_config_command(config_path: &str) -> Result<()> {
         }
         Err(e) => {
             eprintln!("❌ YAML parsing failed:");
-            eprintln!("   {}", e);
+            eprintln!("   {e}");
             std::process::exit(1);
         }
     };
@@ -416,7 +416,7 @@ async fn validate_config_command(config_path: &str) -> Result<()> {
         }
         Err(e) => {
             eprintln!("❌ Configuration validation failed:");
-            eprintln!("{}", e);
+            eprintln!("{e}");
             println!();
             println!("💡 Common fixes:");
             println!("   • Ensure all URLs start with http:// or https://");
