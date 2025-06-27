@@ -116,10 +116,7 @@ impl RouteRateLimiter {
                 // Uses governor's GCRA, which behaves like a token bucket.
                 Quota::with_period(period_duration)
                     .ok_or_else(|| {
-                        format!(
-                            "Invalid period duration for TokenBucket: {:?}",
-                            period_duration
-                        )
+                        format!("Invalid period duration for TokenBucket: {period_duration:?}")
                     })?
                     .allow_burst(quota_requests)
             }
@@ -129,10 +126,7 @@ impl RouteRateLimiter {
                 // This configuration allows bursts up to the number of requests.
                 Quota::with_period(period_duration)
                     .ok_or_else(|| {
-                        format!(
-                            "Invalid period duration for SlidingWindow: {:?}",
-                            period_duration
-                        )
+                        format!("Invalid period duration for SlidingWindow: {period_duration:?}")
                     })?
                     .allow_burst(quota_requests)
             }
@@ -148,10 +142,7 @@ impl RouteRateLimiter {
                 // library/mechanism might be necessary, as governor's core is GCRA.
                 Quota::with_period(period_duration)
                     .ok_or_else(|| {
-                        format!(
-                            "Invalid period duration for FixedWindow: {:?}",
-                            period_duration
-                        )
+                        format!("Invalid period duration for FixedWindow: {period_duration:?}")
                     })?
                     .allow_burst(quota_requests)
             }
@@ -195,7 +186,7 @@ impl RouteRateLimiter {
                     .as_ref()
                     .ok_or_else(|| "header_name is required for RateLimitBy::Header".to_string())?;
                 let header_name = HeaderName::from_bytes(header_name_str.as_bytes())
-                    .map_err(|e| format!("Invalid header_name '{}': {}", header_name_str, e))?;
+                    .map_err(|e| format!("Invalid header_name '{header_name_str}': {e}"))?;
                 let limiter = Arc::new(LimiterWrapper {
                     limiter: RateLimiter::keyed(quota),
                     status_code,

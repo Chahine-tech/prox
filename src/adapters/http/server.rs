@@ -206,7 +206,7 @@ async fn update_config_handler(
         tracing::warn!("Validation failed: {}", validation_err);
         return Err((
             StatusCode::BAD_REQUEST,
-            format!("Invalid config payload: {}", validation_err),
+            format!("Invalid config payload: {validation_err}"),
         )
             .into_response());
     }
@@ -270,10 +270,7 @@ impl HttpServer for HyperServer {
         }; // config_guard is dropped here
 
         let addr = listen_addr_str.parse::<SocketAddr>().with_context(|| {
-            format!(
-                "Failed to parse listen address: \\\"{}\\\"",
-                listen_addr_str
-            )
+            format!("Failed to parse listen address: \\\"{listen_addr_str}\\\"")
         })?;
 
         tracing::info!("Server listening on {}", addr);
@@ -334,10 +331,7 @@ impl HttpServer for HyperServer {
             let rustls_config = RustlsConfig::from_pem_file(&cert_path, &key_path)
                 .await
                 .with_context(|| {
-                    format!(
-                        "Failed to load TLS certificate/key from paths: cert='{}', key='{}'",
-                        cert_path, key_path
-                    )
+                    format!("Failed to load TLS certificate/key from paths: cert='{cert_path}', key='{key_path}'")
                 })?;
 
             // Run server with graceful shutdown
@@ -436,7 +430,7 @@ async fn handle_request(
                     tracing::error!("Request error: {}", err);
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Request error: {}", err),
+                        format!("Request error: {err}"),
                     )
                         .into_response()
                 }

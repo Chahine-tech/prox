@@ -35,10 +35,7 @@ impl AcmeService {
 
         // Create storage directory if it doesn't exist
         fs::create_dir_all(&storage_path).with_context(|| {
-            format!(
-                "Failed to create ACME storage directory: {:?}",
-                storage_path
-            )
+            format!("Failed to create ACME storage directory: {storage_path:?}")
         })?;
 
         Ok(Self {
@@ -66,8 +63,8 @@ impl AcmeService {
 
     /// Get certificate paths for a domain
     fn get_cert_paths(&self, domain: &str) -> (PathBuf, PathBuf) {
-        let cert_path = self.storage_path.join(format!("{}.crt", domain));
-        let key_path = self.storage_path.join(format!("{}.key", domain));
+        let cert_path = self.storage_path.join(format!("{domain}.crt"));
+        let key_path = self.storage_path.join(format!("{domain}.key"));
         (cert_path, key_path)
     }
 

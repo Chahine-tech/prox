@@ -45,8 +45,7 @@ impl BackendUrl {
 
         if !is_secure && !is_http {
             return Err(BackendError::InvalidUrl(format!(
-                "Backend URL must start with http:// or https://, got: {}",
-                url
+                "Backend URL must start with http:// or https://, got: {url}"
             )));
         }
 

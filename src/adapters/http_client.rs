@@ -49,7 +49,7 @@ impl From<HyperClientError> for HttpClientError {
                 HttpClientError::BackendError { url, status }
             }
             HyperClientError::TlsConfigError(e) => {
-                HttpClientError::ConnectionError(format!("TLS Config error: {}", e))
+                HttpClientError::ConnectionError(format!("TLS Config error: {e}"))
             }
         }
     }
@@ -207,8 +207,7 @@ impl HttpClient for HyperHttpClient {
                     e
                 );
                 return Err(HttpClientError::ConnectionError(format!(
-                    "Failed to collect request body: {}",
-                    e
+                    "Failed to collect request body: {e}"
                 )));
             }
         };
@@ -250,8 +249,7 @@ impl HttpClient for HyperHttpClient {
                             e
                         );
                         Err(HttpClientError::ConnectionError(format!(
-                            "Failed to collect backend response body: {}",
-                            e
+                            "Failed to collect backend response body: {e}"
                         )))
                     }
                 }
@@ -277,8 +275,7 @@ impl HttpClient for HyperHttpClient {
                     599, // Custom status code for client errors
                 );
                 Err(HyperClientError::RequestError(format!(
-                    "Request to {} {} failed: {}",
-                    method_for_error_log, uri_for_error_log, e
+                    "Request to {method_for_error_log} {uri_for_error_log} failed: {e}"
                 ))
                 .into())
             }

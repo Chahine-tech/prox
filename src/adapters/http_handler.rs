@@ -186,7 +186,7 @@ impl HyperHandler {
         status_code: Option<u16>,
     ) -> AxumResponse {
         let rel_path = &path[prefix.len()..];
-        let redirect_url = format!("{}{}", target, rel_path);
+        let redirect_url = format!("{target}{rel_path}");
         let status = status_code
             .and_then(|code| StatusCode::from_u16(code).ok())
             .unwrap_or(StatusCode::TEMPORARY_REDIRECT);
@@ -491,8 +491,7 @@ impl HyperHandler {
                         e
                     );
                     return Err(HandlerError::InternalError(format!(
-                        "Failed to read response body: {}",
-                        e
+                        "Failed to read response body: {e}"
                     )));
                 }
             };
@@ -587,7 +586,7 @@ impl HyperHandler {
                         };
                         Response::builder()
                             .status(status_code)
-                            .body(AxumBody::from(format!("Proxy request failed: {}", e)))
+                            .body(AxumBody::from(format!("Proxy request failed: {e}")))
                             .unwrap()
                     }
                 }
@@ -727,8 +726,7 @@ impl HyperHandler {
                         Response::builder()
                             .status(status_code)
                             .body(AxumBody::from(format!(
-                                "Load balanced request failed: {}",
-                                e
+                                "Load balanced request failed: {e}"
                             )))
                             .unwrap()
                     }
@@ -789,7 +787,7 @@ impl HyperHandler {
                 );
                 Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to configure rate limiter: {}", e),
+                    format!("Failed to configure rate limiter: {e}"),
                 )
                     .into_response())
             }

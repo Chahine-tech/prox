@@ -57,7 +57,7 @@ impl HealthChecker {
                 let backend_path = self.proxy_service.get_backend_health_path(&target);
 
                 // Construct health check URL
-                let health_check_url = format!("{}{}", target, backend_path);
+                let health_check_url = format!("{target}{backend_path}");
 
                 tracing::info!("Health checking: {}", health_check_url);
 
@@ -107,7 +107,7 @@ impl HealthChecker {
                             &target,
                             backend_health,
                             health_config,
-                            &format!("Health check error: {}", err),
+                            &format!("Health check error: {err}"),
                         );
                     }
                 }
