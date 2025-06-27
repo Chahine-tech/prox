@@ -19,7 +19,7 @@ use prox::{
 struct Args {
     #[clap(subcommand)]
     command: Option<Commands>,
-    
+
     #[clap(short, long, default_value = "config.yaml")]
     config: String,
 }
@@ -54,10 +54,10 @@ async fn main() -> Result<()> {
     match command {
         "validate" => {
             return validate_config_command(&config_path).await;
-        },
+        }
         "serve" => {
             // Continue with normal server startup
-        },
+        }
         _ => unreachable!(),
     }
 
@@ -378,46 +378,46 @@ async fn main() -> Result<()> {
 async fn validate_config_command(config_path: &str) -> Result<()> {
     use prox::config::loader::load_config_unchecked;
     use prox::config::validation::ConfigValidator;
-    
+
     println!("🔍 Validating configuration file: {}", config_path);
-    
+
     // First check if file exists and is readable
     if !Path::new(config_path).exists() {
         eprintln!("❌ Error: Configuration file '{}' not found", config_path);
         std::process::exit(1);
     }
-    
+
     // Try to parse the YAML
     let config = match load_config_unchecked(config_path).await {
         Ok(config) => {
             println!("✅ YAML parsing: OK");
             config
-        },
+        }
         Err(e) => {
             eprintln!("❌ YAML parsing failed:");
             eprintln!("   {}", e);
             std::process::exit(1);
         }
     };
-    
+
     // Validate the configuration
     match ConfigValidator::validate(&config) {
         Ok(()) => {
             println!("✅ Configuration validation: OK");
-            println!("");
+            println!();
             println!("📋 Configuration Summary:");
             println!("   • Listen Address: {}", config.listen_addr);
             println!("   • Routes: {}", config.routes.len());
             println!("   • TLS Enabled: {}", config.tls.is_some());
             println!("   • Health Checks: {}", config.health_check.enabled);
-            println!("");
+            println!();
             println!("🎉 Configuration is valid and ready to use!");
             Ok(())
-        },
+        }
         Err(e) => {
             eprintln!("❌ Configuration validation failed:");
             eprintln!("{}", e);
-            println!("");
+            println!();
             println!("💡 Common fixes:");
             println!("   • Ensure all URLs start with http:// or https://");
             println!("   • Check that file paths exist");

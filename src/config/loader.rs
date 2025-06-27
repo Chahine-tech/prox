@@ -12,7 +12,7 @@ pub enum ConfigError {
 
     #[error("Failed to parse YAML config: {0}")]
     ParseError(#[from] serde_yaml::Error),
-    
+
     #[error("Configuration validation failed: {0}")]
     ValidationError(#[from] ValidationError),
 }
@@ -23,10 +23,10 @@ pub type ConfigResult<T> = std::result::Result<T, ConfigError>;
 pub async fn load_config<P: AsRef<Path>>(path: P) -> ConfigResult<ServerConfig> {
     let config_content = fs::read_to_string(path).await?;
     let config: ServerConfig = serde_yaml::from_str(&config_content)?;
-    
+
     // Validate the configuration
     ConfigValidator::validate(&config)?;
-    
+
     Ok(config)
 }
 
