@@ -11,6 +11,7 @@ Prox is a lightweight reverse proxy built in Rust, implementing a hexagonal arch
 - Path Rewriting for proxy and load-balanced routes
 - Health checking for backend services
 - Rate limiting (by IP, header, or route-wide) with configurable limits and responses
+- **Configuration Validation** with detailed error reporting and CLI validation command
 - **Production-grade monitoring** with Prometheus metrics and Grafana dashboards
 - Configurable via YAML
 - Custom error handling with type safety
@@ -34,6 +35,7 @@ src/
 ├── config/               # Configuration handling
 │   ├── loader.rs         # Configuration loading logic
 │   ├── models.rs         # Configuration data structures with builder pattern
+│   ├── validation.rs     # Configuration validation with detailed error reporting
 │   └── mod.rs           
 ├── core/                 # Domain logic
 │   ├── proxy.rs          # Core proxy service logic
@@ -75,6 +77,62 @@ src/
 
 ## Usage
 
+### Configuration Validation
+
+Before running the proxy server, you can validate your configuration file to catch any errors:
+
+```bash
+# Validate your configuration file
+./prox validate --config config.yaml
+
+# Or validate the default config.yaml file
+./prox validate
+```
+
+**Example validation output (success):**
+```bash
+$ ./prox validate
+🔍 Validating configuration file: config.yaml
+✅ YAML parsing: OK
+✅ Configuration validation: OK
+
+📋 Configuration Summary:
+   • Listen Address: 127.0.0.1:3000
+   • Routes: 5
+   • TLS Enabled: true
+   • Health Checks: true
+
+🎉 Configuration is valid and ready to use!
+```
+
+**Example validation output (with errors):**
+```bash
+$ ./prox validate
+🔍 Validating configuration file: config.yaml
+✅ YAML parsing: OK
+❌ Configuration validation failed:
+Found 2 validation error(s):
+  1. Invalid URL in field 'route '/api' proxy target': not_a_url - Invalid URL format: relative URL without a base
+  2. Invalid listen address: invalid_address - Must be in format 'IP:PORT' (e.g., '127.0.0.1:3000' or '0.0.0.0:8080')
+
+💡 Common fixes:
+   • Ensure all URLs start with http:// or https://
+   • Check that file paths exist
+   • Verify listen address format (e.g., '127.0.0.1:3000')
+   • Ensure rate limit periods use valid units (s, m, h)
+```
+
+The validation feature checks:
+- ✅ Listen address format
+- ✅ Route configuration (proxy, load balance, static, redirect)
+- ✅ URL validity for all targets
+- ✅ Rate limiting configuration
+- ✅ TLS certificate and ACME settings
+- ✅ File existence for static routes and certificates
+- ✅ Route conflict detection
+
+### Starting the Server
+
 ### Option 1: Manual TLS Certificates
 
 1. Generate self-signed certificates for HTTPS (or use your own):
@@ -85,19 +143,25 @@ src/
 
 2. Configure your reverse proxy in `config.yaml` with manual certificates
 
-3. Run the proxy: `cargo run`
+3. Validate your configuration: `./prox validate --config config.yaml`
+
+4. Run the proxy: `cargo run` or `./prox serve --config config.yaml`
 
 ### Option 2: Automatic TLS with Let's Encrypt (ACME)
 
 1. Configure your reverse proxy in `config.yaml` with ACME settings
 
-2. Ensure your domain points to your server and port 443 is accessible
+2. Validate your configuration: `./prox validate --config config.yaml`
 
-3. Run the proxy: `cargo run`
+3. Ensure your domain points to your server and port 443 is accessible
+
+4. Run the proxy: `cargo run` or `./prox serve --config config.yaml`
 
 **Note**: For ACME to work, your server must be publicly accessible on port 443, and the domains you specify must point to your server for HTTP-01 challenge validation.
 
 ## Configuration Examples
+
+All configuration examples below can be validated using `./prox validate` before starting the server.
 
 ### Manual TLS Configuration
 
@@ -281,6 +345,41 @@ curl -k https://127.0.0.1:3000/balance/get
 ```
 
 Note: The `-k` flag is used to skip certificate validation for self-signed certificates.
+
+## CLI Commands
+
+Prox supports several CLI commands for different operations:
+
+### Server Commands
+
+```bash
+# Start the proxy server (default behavior)
+./prox serve --config config.yaml
+./prox serve  # Uses default config.yaml
+
+# Legacy format (still supported)
+./prox --config config.yaml
+```
+
+### Configuration Validation
+
+```bash
+# Validate a specific configuration file
+./prox validate --config config.yaml
+
+# Validate the default config.yaml file
+./prox validate
+
+# Exit codes:
+# 0 = Configuration is valid
+# 1 = Configuration has errors or file not found
+```
+
+**Benefits of configuration validation:**
+- 🔍 **Early Error Detection**: Catch configuration issues before deployment
+- 🚀 **CI/CD Integration**: Validate configs in automated pipelines  
+- 📝 **Self-Documenting**: Clear error messages explain requirements
+- 🛡️ **Production Safety**: Prevent server startup with invalid configuration
 
 ## Monitoring & Observability
 
