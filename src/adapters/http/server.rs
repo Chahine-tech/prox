@@ -184,7 +184,8 @@ async fn update_config_handler(
     // Validate the incoming configuration payload using ServerConfigBuilder.
     let mut builder = ServerConfig::builder()
         .listen_addr(new_config_payload.listen_addr.clone()) // Clone to avoid moving from new_config_payload
-        .health_check(new_config_payload.health_check.clone());
+        .health_check(new_config_payload.health_check.clone())
+        .protocols(new_config_payload.protocols.clone());
 
     for (prefix, route_config) in new_config_payload.routes.iter() {
         builder = builder.route(prefix.clone(), route_config.clone());
@@ -262,11 +263,12 @@ impl HttpServer for HyperServer {
         let app = self.build_app().await;
 
         // Read values from config_guard and then drop it
-        let (listen_addr_str, tls_config_opt_owned) = {
+        let (listen_addr_str, tls_config_opt_owned, protocols_config) = {
             let config_guard = self.app_state.config_holder.read().unwrap();
             let addr_str = config_guard.listen_addr.clone();
             let tls_opt = config_guard.tls.clone(); // Clone the Option<TlsConfig>
-            (addr_str, tls_opt)
+            let protocols = config_guard.protocols.clone(); // Clone the ProtocolConfig
+            (addr_str, tls_opt, protocols)
         }; // config_guard is dropped here
 
         let addr = listen_addr_str.parse::<SocketAddr>().with_context(|| {
@@ -274,6 +276,11 @@ impl HttpServer for HyperServer {
         })?;
 
         tracing::info!("Server listening on {}", addr);
+        tracing::info!(
+            "Protocol configuration: HTTP/2 enabled: {}, WebSocket enabled: {}",
+            protocols_config.http2_enabled,
+            protocols_config.websocket_enabled
+        );
 
         // Create shutdown signal receiver
         let mut shutdown_receiver = self.graceful_shutdown.subscribe();

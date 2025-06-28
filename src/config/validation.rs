@@ -175,6 +175,41 @@ impl ConfigValidator {
                     // This is OK, we'll use a default 302 in the actual implementation
                 }
             }
+            RouteConfig::Websocket {
+                target,
+                max_frame_size,
+                max_message_size,
+                ..
+            } => {
+                // Validate WebSocket target URL
+                if let Err(e) = Self::validate_websocket_url(
+                    target,
+                    &format!("route '{path}' websocket target"),
+                ) {
+                    errors.push(e);
+                }
+
+                // Validate frame size limits
+                if let Some(frame_size) = max_frame_size {
+                    if *frame_size == 0 {
+                        errors.push(ValidationError::InvalidField {
+                            field: format!("route '{path}' max_frame_size"),
+                            message: "WebSocket max frame size must be greater than 0".to_string(),
+                        });
+                    }
+                }
+
+                // Validate message size limits
+                if let Some(message_size) = max_message_size {
+                    if *message_size == 0 {
+                        errors.push(ValidationError::InvalidField {
+                            field: format!("route '{path}' max_message_size"),
+                            message: "WebSocket max message size must be greater than 0"
+                                .to_string(),
+                        });
+                    }
+                }
+            }
         }
 
         // Validate rate limiting if configured
@@ -183,6 +218,7 @@ impl ConfigValidator {
             RouteConfig::LoadBalance { rate_limit, .. } => rate_limit,
             RouteConfig::Static { rate_limit, .. } => rate_limit,
             RouteConfig::Redirect { rate_limit, .. } => rate_limit,
+            RouteConfig::Websocket { rate_limit, .. } => rate_limit,
         };
 
         if let Some(rate_limit) = rate_limit {
@@ -197,6 +233,7 @@ impl ConfigValidator {
             RouteConfig::LoadBalance { path_rewrite, .. } => path_rewrite,
             RouteConfig::Static { .. } => &None,
             RouteConfig::Redirect { .. } => &None,
+            RouteConfig::Websocket { path_rewrite, .. } => path_rewrite,
         };
 
         if let Some(path_rewrite) = path_rewrite {
@@ -238,6 +275,37 @@ impl ConfigValidator {
                 field: context.to_string(),
                 url: url_str.to_string(),
                 reason: format!("Invalid URL format: {e}"),
+            }),
+        }
+    }
+
+    /// Validate WebSocket URL format
+    fn validate_websocket_url(url_str: &str, context: &str) -> ValidationResult<()> {
+        match Url::parse(url_str) {
+            Ok(url) => {
+                if !matches!(url.scheme(), "ws" | "wss" | "http" | "https") {
+                    return Err(ValidationError::InvalidUrl {
+                        field: context.to_string(),
+                        url: url_str.to_string(),
+                        reason: "WebSocket URL must use ws://, wss://, http://, or https:// scheme"
+                            .to_string(),
+                    });
+                }
+
+                if url.host().is_none() {
+                    return Err(ValidationError::InvalidUrl {
+                        field: context.to_string(),
+                        url: url_str.to_string(),
+                        reason: "WebSocket URL must have a valid host".to_string(),
+                    });
+                }
+
+                Ok(())
+            }
+            Err(e) => Err(ValidationError::InvalidUrl {
+                field: context.to_string(),
+                url: url_str.to_string(),
+                reason: format!("Invalid WebSocket URL format: {e}"),
             }),
         }
     }
@@ -565,6 +633,7 @@ mod tests {
             tls: None,
             health_check: Default::default(),
             backend_health_paths: HashMap::new(),
+            protocols: Default::default(),
         }
     }
 
@@ -650,5 +719,71 @@ mod tests {
         assert!(!ConfigValidator::is_valid_domain(""));
         assert!(!ConfigValidator::is_valid_domain(".example.com"));
         assert!(!ConfigValidator::is_valid_domain("example..com"));
+    }
+
+    #[test]
+    fn test_websocket_route_validation() {
+        let mut config = create_valid_config();
+
+        // Test valid WebSocket route
+        config.routes.insert(
+            "/ws".to_string(),
+            RouteConfig::Websocket {
+                target: "wss://echo.websocket.org".to_string(),
+                path_rewrite: None,
+                rate_limit: None,
+                max_frame_size: Some(65536),
+                max_message_size: Some(1048576),
+            },
+        );
+
+        assert!(ConfigValidator::validate(&config).is_ok());
+
+        // Test invalid WebSocket URL scheme
+        config.routes.insert(
+            "/ws-invalid".to_string(),
+            RouteConfig::Websocket {
+                target: "ftp://invalid.com".to_string(),
+                path_rewrite: None,
+                rate_limit: None,
+                max_frame_size: None,
+                max_message_size: None,
+            },
+        );
+
+        let result = ConfigValidator::validate(&config);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("WebSocket URL must use ws://, wss://, http://, or https:// scheme")
+        );
+    }
+
+    #[test]
+    fn test_websocket_frame_size_validation() {
+        let mut config = create_valid_config();
+
+        // Test zero frame size (should be invalid)
+        config.routes.insert(
+            "/ws".to_string(),
+            RouteConfig::Websocket {
+                target: "ws://example.com".to_string(),
+                path_rewrite: None,
+                rate_limit: None,
+                max_frame_size: Some(0),
+                max_message_size: None,
+            },
+        );
+
+        let result = ConfigValidator::validate(&config);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("WebSocket max frame size must be greater than 0")
+        );
     }
 }

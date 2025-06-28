@@ -1,6 +1,31 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Protocol configuration for server capabilities
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct ProtocolConfig {
+    /// Enable HTTP/2 support (requires TLS for most clients)
+    pub http2_enabled: bool,
+    /// Enable WebSocket support
+    pub websocket_enabled: bool,
+    /// Maximum frame size for HTTP/2 (in bytes)
+    pub http2_max_frame_size: Option<u32>,
+    /// Maximum concurrent streams for HTTP/2
+    pub http2_max_concurrent_streams: Option<u32>,
+}
+
+impl Default for ProtocolConfig {
+    fn default() -> Self {
+        Self {
+            http2_enabled: true,
+            websocket_enabled: true,
+            http2_max_frame_size: None,         // Use hyper defaults
+            http2_max_concurrent_streams: None, // Use hyper defaults
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct HeaderActions {
     #[serde(default)]
@@ -52,6 +77,8 @@ pub struct ServerConfig {
     pub health_check: HealthCheckConfig,
     #[serde(default)]
     pub backend_health_paths: HashMap<String, String>,
+    #[serde(default)]
+    pub protocols: ProtocolConfig,
 }
 
 impl ServerConfig {
@@ -69,6 +96,7 @@ pub struct ServerConfigBuilder {
     tls: Option<TlsConfig>,
     health_check: Option<HealthCheckConfig>,
     backend_health_paths: HashMap<String, String>,
+    protocols: Option<ProtocolConfig>,
 }
 
 impl ServerConfigBuilder {
@@ -121,6 +149,12 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Set protocol configuration
+    pub fn protocols(mut self, config: ProtocolConfig) -> Self {
+        self.protocols = Some(config);
+        self
+    }
+
     /// Build the final ServerConfig
     pub fn build(self) -> Result<ServerConfig, String> {
         let listen_addr = self
@@ -137,6 +171,7 @@ impl ServerConfigBuilder {
             tls: self.tls,
             health_check: self.health_check.unwrap_or_default(),
             backend_health_paths: self.backend_health_paths,
+            protocols: self.protocols.unwrap_or_default(),
         })
     }
 }
@@ -287,6 +322,17 @@ pub enum RouteConfig {
         request_body: Option<BodyActions>,
         #[serde(default)]
         response_body: Option<BodyActions>,
+    },
+    Websocket {
+        target: String,
+        path_rewrite: Option<String>,
+        rate_limit: Option<RateLimitConfig>,
+        /// Maximum WebSocket frame size (in bytes)
+        #[serde(default)]
+        max_frame_size: Option<usize>,
+        /// Maximum message size (in bytes)
+        #[serde(default)]
+        max_message_size: Option<usize>,
     },
 }
 

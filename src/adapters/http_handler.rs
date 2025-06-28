@@ -744,6 +744,44 @@ impl HyperHandler {
         }
     }
 
+    async fn handle_websocket_proxy(
+        &self,
+        _target: &str,
+        _prefix: &str,
+        _path_rewrite: Option<&str>,
+        req: Request<AxumBody>,
+        _client_ip: Option<SocketAddr>,
+    ) -> AxumResponse {
+        // Check if this is a WebSocket upgrade request
+        let is_websocket_upgrade = req
+            .headers()
+            .get("upgrade")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_lowercase() == "websocket")
+            .unwrap_or(false);
+
+        if !is_websocket_upgrade {
+            tracing::warn!(
+                "Non-WebSocket request to WebSocket route: {}",
+                req.uri().path()
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                "This route only supports WebSocket connections",
+            )
+                .into_response();
+        }
+
+        // For WebSocket, we need to establish a connection to the backend
+        // This is a complex operation that requires WebSocket client support
+        tracing::warn!("WebSocket proxying is not yet fully implemented");
+        (
+            StatusCode::NOT_IMPLEMENTED,
+            "WebSocket proxying is not yet implemented",
+        )
+            .into_response()
+    }
+
     async fn get_or_create_rate_limiter(
         &self,
         route_path: &str,
@@ -819,6 +857,7 @@ impl HttpHandler for HyperHandler {
                     RouteConfig::Redirect { rate_limit, .. } => rate_limit.as_ref(),
                     RouteConfig::Proxy { rate_limit, .. } => rate_limit.as_ref(),
                     RouteConfig::LoadBalance { rate_limit, .. } => rate_limit.as_ref(),
+                    RouteConfig::Websocket { rate_limit, .. } => rate_limit.as_ref(),
                 };
 
                 if let Some(rate_limit_config) = maybe_rate_limit_config {
@@ -932,6 +971,20 @@ impl HttpHandler for HyperHandler {
                             initial_req_ctx: &initial_req_ctx,
                         };
                         self.handle_load_balance(args).await
+                    }
+                    RouteConfig::Websocket {
+                        ref target,
+                        path_rewrite,
+                        ..
+                    } => {
+                        self.handle_websocket_proxy(
+                            target,
+                            &prefix_str,
+                            path_rewrite.as_deref(),
+                            req,
+                            client_ip,
+                        )
+                        .await
                     }
                 }
             }
