@@ -22,4 +22,5 @@ pub use crate::adapters::file_system::TowerFileSystem;
 pub use crate::adapters::health_checker::HealthChecker;
 pub use crate::adapters::http::server::HyperServer;
 pub use crate::adapters::http_client::HyperHttpClient;
+pub use crate::adapters::unified_server::UnifiedServer;
 pub use crate::core::ProxyService;

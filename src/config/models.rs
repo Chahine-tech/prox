@@ -9,10 +9,57 @@ pub struct ProtocolConfig {
     pub http2_enabled: bool,
     /// Enable WebSocket support
     pub websocket_enabled: bool,
+    /// Enable HTTP/3 support (requires TLS and UDP)
+    pub http3_enabled: bool,
     /// Maximum frame size for HTTP/2 (in bytes)
     pub http2_max_frame_size: Option<u32>,
     /// Maximum concurrent streams for HTTP/2
     pub http2_max_concurrent_streams: Option<u32>,
+    /// HTTP/3 specific configuration
+    pub http3_config: Option<Http3Config>,
+}
+
+/// HTTP/3 specific configuration options
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct Http3Config {
+    /// Maximum data per connection (in bytes)
+    pub max_data: u64,
+    /// Maximum data per stream (in bytes)
+    pub max_stream_data: u64,
+    /// Maximum number of bidirectional streams
+    pub max_streams_bidi: u64,
+    /// Maximum idle timeout (in milliseconds)
+    pub max_idle_timeout: u64,
+    /// Congestion control algorithm
+    pub congestion_control: Http3CongestionControl,
+    /// Enable 0-RTT connection resumption
+    pub enable_0rtt: bool,
+    /// Maximum packet size (in bytes)
+    pub max_packet_size: Option<u16>,
+}
+
+impl Default for Http3Config {
+    fn default() -> Self {
+        Self {
+            max_data: 10_000_000,
+            max_stream_data: 1_000_000,
+            max_streams_bidi: 100,
+            max_idle_timeout: 30_000,
+            congestion_control: Http3CongestionControl::Cubic,
+            enable_0rtt: true,
+            max_packet_size: None,
+        }
+    }
+}
+
+/// HTTP/3 congestion control algorithms
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Http3CongestionControl {
+    Cubic,
+    Reno,
+    Bbr,
 }
 
 impl Default for ProtocolConfig {
@@ -20,8 +67,10 @@ impl Default for ProtocolConfig {
         Self {
             http2_enabled: true,
             websocket_enabled: true,
-            http2_max_frame_size: None,         // Use hyper defaults
+            http3_enabled: false, // Disabled by default as it requires careful configuration
+            http2_max_frame_size: None, // Use hyper defaults
             http2_max_concurrent_streams: None, // Use hyper defaults
+            http3_config: None,   // Use defaults when HTTP/3 is enabled
         }
     }
 }

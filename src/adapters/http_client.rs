@@ -163,11 +163,8 @@ impl HttpClient for HyperHttpClient {
         let _enter = span.enter();
 
         // Start timer for backend request duration
-        let _backend_timer = BackendRequestTimer::new(
-            backend_identifier.clone(),
-            request_path.clone(),
-            request_method.clone(),
-        );
+        let _backend_timer =
+            BackendRequestTimer::new(&backend_identifier, &request_path, &request_method);
 
         if let Some(host_str) = req.uri().host() {
             let host_header_val = if let Some(port) = req.uri().port() {

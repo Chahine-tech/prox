@@ -1,0 +1,54 @@
+# Example configuration with HTTP/3 support
+listen_addr: "127.0.0.1:3000"
+
+# Protocol configuration
+protocols:
+  http2_enabled: true
+  websocket_enabled: true
+  http3_enabled: true  # Enable HTTP/3 support
+  http3_config:
+    max_data: 10000000           # 10MB max data per connection
+    max_stream_data: 1000000     # 1MB max data per stream
+    max_streams_bidi: 100        # Max 100 bidirectional streams
+    max_idle_timeout: 30000      # 30 second idle timeout
+    congestion_control: "cubic"  # Use CUBIC congestion control
+    enable_0rtt: true           # Enable 0-RTT connection resumption
+    max_packet_size: 1452       # Optional: set max UDP packet size
+
+# TLS configuration (required for HTTP/3)
+tls:
+  cert_path: "certs/cert.pem"
+  key_path: "certs/key.pem"
+
+# Routes configuration
+routes:
+  "/api/":
+    type: "proxy"
+    target: "http://localhost:8080"
+    request_headers:
+      add:
+        "X-Forwarded-Proto": "https"
+    response_headers:
+      add:
+        "X-Proxy-Version": "prox-http3"
+
+  "/static/":
+    type: "static"
+    root: "./static"
+
+  "/health":
+    type: "proxy"
+    target: "http://localhost:8080/health"
+
+# Health check configuration
+health_check:
+  enabled: true
+  interval_secs: 30
+  timeout_secs: 5
+  path: "/health"
+  unhealthy_threshold: 3
+  healthy_threshold: 2
+
+# Backend health paths
+backend_health_paths:
+  "http://localhost:8080": "/health"

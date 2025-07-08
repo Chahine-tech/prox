@@ -4,21 +4,31 @@ Prox is a lightweight reverse proxy built in Rust, implementing a hexagonal arch
 
 ## Features
 
-- HTTP/HTTPS support with TLS
-- Static file serving
-- HTTP redirects
-- Load balancing (round-robin and random strategies)
-- Path Rewriting for proxy and load-balanced routes
-- Health checking for backend services
-- Rate limiting (by IP, header, or route-wide) with configurable limits and responses
-- **Configuration Validation** with detailed error reporting and CLI validation command
-- **Production-grade monitoring** with Prometheus metrics and Grafana dashboards
-- Configurable via YAML
-- Custom error handling with type safety
-- Browser-like request headers for improved compatibility
-- Request and Response Manipulation (Headers & Body) with conditional logic.
+- **Modern Protocol Support** with complete HTTP/1.1, HTTP/2, and HTTP/3 (QUIC) implementation
+  - ✅ **HTTP/3 (QUIC)** with automatic Alt-Svc advertisement and protocol negotiation
+  - ✅ **WebSocket Support** with first-class proxying and configurable frame/message sizes
+  - ✅ **TLS Integration** with seamless certificate sharing between HTTP/2 and HTTP/3
+  - ✅ **Unified Server Architecture** supporting both TCP (HTTP/1.1, HTTP/2) and UDP (HTTP/3)
+- **Advanced Proxy Features**
+  - Static file serving with configurable directories
+  - HTTP redirects with custom status codes
+  - Load balancing (round-robin and random strategies)
+  - Path rewriting for proxy and load-balanced routes
+  - Health checking for backend services with configurable intervals
+- **Enterprise-Grade Features**
+  - Rate limiting (by IP, header, or route-wide) with multiple algorithms
+  - **Configuration Validation** with detailed error reporting and CLI validation command
+  - **Production-grade monitoring** with Prometheus metrics and Grafana dashboards
+  - **Automatic TLS Certificate Management** with ACME/Let's Encrypt integration
+  - **Graceful Shutdown** with connection tracking and zero-downtime restarts
+- **Developer Experience**
+  - Configurable via YAML with hot-reload support
+  - Custom error handling with type safety
+  - Browser-like request headers for improved compatibility
+  - Request and Response Manipulation (Headers & Body) with conditional logic
 
-👉 **See also:** [Value-Adding Ideas and Implementation Status](docs/REVERSE_PROXY_VALUE_ADDITIONS.md)
+👉 **See also:** [Value-Adding Ideas and Implementation Status](docs/REVERSE_PROXY_VALUE_ADDITIONS.md)  
+👉 **HTTP/3 Setup:** [HTTP/3 Implementation Guide](docs/HTTP3_IMPLEMENTATION.md)
 
 ## Architecture
 

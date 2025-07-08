@@ -618,7 +618,14 @@ impl HyperHandler {
             return (StatusCode::INTERNAL_SERVER_ERROR, "No targets available").into_response();
         }
 
-        let current_proxy_service = self.proxy_service_holder.read().unwrap().clone();
+        let current_proxy_service = match self.proxy_service_holder.read() {
+            Ok(service) => service.clone(),
+            Err(e) => {
+                tracing::error!("Failed to acquire proxy service read lock: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                    .into_response();
+            }
+        };
         let healthy_targets = current_proxy_service.get_healthy_backends(targets);
 
         if healthy_targets.is_empty() {
@@ -844,7 +851,16 @@ impl HttpHandler for HyperHandler {
         // Create the context from the *initial* request. This is cheap.
         let initial_req_ctx = RequestConditionContext::from_request(&req);
 
-        let current_proxy_service = self.proxy_service_holder.read().unwrap().clone();
+        let current_proxy_service = match self.proxy_service_holder.read() {
+            Ok(service) => service.clone(),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to acquire proxy service read lock in handle_request: {}",
+                    e
+                );
+                return Err(HandlerError::InternalError("Service unavailable".into()));
+            }
+        };
         // Use initial_req_ctx.uri_path for finding the route
         let matched_route_opt =
             current_proxy_service.find_matching_route(&initial_req_ctx.uri_path);
