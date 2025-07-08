@@ -1,4 +1,12 @@
 listen_addr: "127.0.0.1:3000"
+
+# Protocol configuration
+protocols:
+  http2_enabled: true
+  websocket_enabled: true
+  http2_max_frame_size: 16384
+  http2_max_concurrent_streams: 100
+
 # TLS configuration - uncomment to enable TLS
 tls:
   # Option 1: Manual certificates (existing approach) - ACTIVE FOR LOCAL TESTING
@@ -117,3 +125,14 @@ routes:
         # For a simpler test, let's make it unconditional for this example path:
         path_matches: "/manipulate/test-response-body" # Condition on original request path
       set_text: "Response body modified by Prox. Original request was to {uri_path}."
+  "/ws":  # WebSocket route for testing new features
+    type: "websocket"
+    target: "ws://echo.websocket.org"
+    max_frame_size: 65536      # 64KB
+    max_message_size: 1048576  # 1MB
+    rate_limit:
+      by: "ip"
+      requests: 50
+      period: "1m"
+      status_code: 429
+      message: "WebSocket rate limit exceeded"
