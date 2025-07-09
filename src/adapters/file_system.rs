@@ -27,7 +27,7 @@ impl FileSystem for TowerFileSystem {
         let path = path.to_string();
 
         // Create a new request with the path adjusted for ServeDir
-        let uri_string = format!("/{}", path.trim_start_matches('/'));
+        let uri_string = format!("/{path}", path = path.trim_start_matches('/'));
         let uri = hyper::Uri::try_from(uri_string)
             .map_err(|e| FileSystemError::InvalidPath(e.to_string()))?;
 

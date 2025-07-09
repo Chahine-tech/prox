@@ -168,7 +168,7 @@ impl HttpClient for HyperHttpClient {
 
         if let Some(host_str) = req.uri().host() {
             let host_header_val = if let Some(port) = req.uri().port() {
-                HeaderValue::from_str(&format!("{}:{}", host_str, port.as_u16()))
+                HeaderValue::from_str(&format!("{host_str}:{}", port.as_u16()))
                     .unwrap_or_else(|_| HeaderValue::from_static(""))
             } else {
                 HeaderValue::from_str(host_str).unwrap_or_else(|_| HeaderValue::from_static(""))

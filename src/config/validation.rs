@@ -424,7 +424,7 @@ impl ConfigValidator {
         // Validate email format
         if !Self::is_valid_email(&config.email) {
             return Err(ValidationError::InvalidAcme {
-                message: format!("Invalid email address: {}", config.email),
+                message: format!("Invalid email address: {email}", email = config.email),
             });
         }
 
@@ -606,7 +606,7 @@ impl ConfigValidator {
     fn format_multiple_errors(errors: Vec<ValidationError>) -> String {
         let mut message = format!("Found {} validation error(s):\n", errors.len());
         for (i, error) in errors.iter().enumerate() {
-            message.push_str(&format!("  {}. {}\n", i + 1, error));
+            message.push_str(&format!("  {}. {error}\n", i + 1));
         }
         message
     }

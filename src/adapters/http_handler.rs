@@ -538,7 +538,7 @@ impl HyperHandler {
 
         let final_path = Self::compute_final_path(&original_path, args.prefix, args.path_rewrite);
 
-        let target_uri_string = format!("{}{}{}", target.trim_end_matches('/'), final_path, query);
+        let target_uri_string = format!("{}{final_path}{query}", target.trim_end_matches('/'));
 
         match target_uri_string.parse::<hyper::Uri>() {
             Ok(uri) => {

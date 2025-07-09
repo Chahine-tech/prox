@@ -394,8 +394,8 @@ async fn main() -> Result<()> {
 
         if protocols.http3_enabled {
             if let Some(h3_addr) = server.http3_local_addr() {
-                tracing::info!("HTTP/3 server listening on UDP {}", h3_addr);
-                println!("HTTP/3 server listening on UDP {}", h3_addr);
+                tracing::info!("HTTP/3 server listening on UDP {h3_addr}");
+                println!("HTTP/3 server listening on UDP {h3_addr}");
             }
         }
     }
