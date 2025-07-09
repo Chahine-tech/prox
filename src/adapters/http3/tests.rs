@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod http3_tests {
     use crate::config::models::{Http3Config, Http3CongestionControl};
     use bytes::Bytes;
     use quiche::h3::Header as H3Header;
@@ -79,11 +79,10 @@ mod tests {
     fn test_bytes_creation() {
         // Test Bytes creation for HTTP/3 request bodies
         let empty_body: Option<Bytes> = None;
-        let some_body = Some(Bytes::from("test body"));
+        let some_body = Bytes::from("test body");
 
         assert!(empty_body.is_none());
-        assert!(some_body.is_some());
-        assert_eq!(some_body.unwrap(), Bytes::from("test body"));
+        assert_eq!(some_body, Bytes::from("test body"));
     }
 
     #[test]
@@ -110,7 +109,7 @@ mod tests {
         drop(authority_header);
 
         // Test successful creation
-        assert!(true);
+        // Headers were created without panicking - test passes
     }
 
     #[test]

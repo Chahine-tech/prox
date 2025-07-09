@@ -132,7 +132,7 @@ impl ConnectionManager {
         let mut connections = self.connections.lock().await;
         let conn_id_vec = conn_id.to_vec();
 
-        if !connections.contains_key(&conn_id_vec) {
+        if let std::collections::hash_map::Entry::Vacant(e) = connections.entry(conn_id_vec) {
             // Create a new config for this connection
             let quiche_config = self.create_quiche_config()?;
             let mut config = quiche_config.into_inner();
@@ -145,7 +145,7 @@ impl ConnectionManager {
                 quic_conn.establish_h3(&self.h3_config)?;
             }
 
-            connections.insert(conn_id_vec, quic_conn);
+            e.insert(quic_conn);
         }
 
         Ok(())

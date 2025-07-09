@@ -39,13 +39,21 @@ impl UnifiedServer {
 
         // Check if HTTP/3 is enabled and create HTTP/3 server if needed
         let http3_server = {
-            let config = config_holder.read().map_err(|e| {
-                anyhow::anyhow!("Failed to acquire config read lock for HTTP/3 setup: {}", e)
-            })?;
+            let (http3_enabled, tls_config, listen_addr, http3_config) = {
+                let config = config_holder.read().map_err(|e| {
+                    anyhow::anyhow!("Failed to acquire config read lock for HTTP/3 setup: {}", e)
+                })?;
+                (
+                    config.protocols.http3_enabled,
+                    config.tls.clone(),
+                    config.listen_addr.clone(),
+                    config.protocols.http3_config.as_ref().cloned().unwrap_or_default(),
+                )
+            };
 
-            if config.protocols.http3_enabled {
+            if http3_enabled {
                 // HTTP/3 requires TLS
-                if let Some(ref tls_config) = config.tls {
+                if let Some(ref tls_config) = tls_config {
                     let (cert_path, key_path) = if let Some(acme_config) = &tls_config.acme {
                         if acme_config.enabled {
                             // For ACME, we would need to get the certificate paths
@@ -65,18 +73,10 @@ impl UnifiedServer {
                     };
 
                     // Parse the listen address and create UDP address for HTTP/3
-                    let tcp_addr: SocketAddr = config
-                        .listen_addr
+                    let tcp_addr: SocketAddr = listen_addr
                         .parse()
                         .context("Invalid listen address")?;
                     let udp_addr = SocketAddr::new(tcp_addr.ip(), tcp_addr.port());
-
-                    let http3_config = config
-                        .protocols
-                        .http3_config
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_default();
 
                     let server = Http3Server::new(
                         udp_addr,
