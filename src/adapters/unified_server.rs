@@ -47,7 +47,12 @@ impl UnifiedServer {
                     config.protocols.http3_enabled,
                     config.tls.clone(),
                     config.listen_addr.clone(),
-                    config.protocols.http3_config.as_ref().cloned().unwrap_or_default(),
+                    config
+                        .protocols
+                        .http3_config
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_default(),
                 )
             };
 
@@ -73,9 +78,8 @@ impl UnifiedServer {
                     };
 
                     // Parse the listen address and create UDP address for HTTP/3
-                    let tcp_addr: SocketAddr = listen_addr
-                        .parse()
-                        .context("Invalid listen address")?;
+                    let tcp_addr: SocketAddr =
+                        listen_addr.parse().context("Invalid listen address")?;
                     let udp_addr = SocketAddr::new(tcp_addr.ip(), tcp_addr.port());
 
                     let server = Http3Server::new(

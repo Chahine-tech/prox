@@ -94,10 +94,7 @@ impl Http3Server {
 
         // Handle HTTP/3 events
         for (stream_id, event) in events {
-            if let Err(e) = self
-                .handle_h3_event(&conn_id, stream_id, event)
-                .await
-            {
+            if let Err(e) = self.handle_h3_event(&conn_id, stream_id, event).await {
                 tracing::error!("Error handling HTTP/3 event: {}", e);
             }
         }
@@ -216,9 +213,9 @@ mod tests {
 
         // Test that congestion control is set correctly
         match config.congestion_control {
-            Http3CongestionControl::Cubic => { /* Valid variant */ },
-            Http3CongestionControl::Reno => { /* Valid variant */ },
-            Http3CongestionControl::Bbr => { /* Valid variant */ },
+            Http3CongestionControl::Cubic => { /* Valid variant */ }
+            Http3CongestionControl::Reno => { /* Valid variant */ }
+            Http3CongestionControl::Bbr => { /* Valid variant */ }
         }
     }
 }
