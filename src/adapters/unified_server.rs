@@ -43,7 +43,7 @@ impl UnifiedServer {
                 let config = config_holder.read().map_err(|e| {
                     anyhow::anyhow!("Failed to acquire config read lock for HTTP/3 setup: {}", e)
                 })?;
-                (
+                let result = (
                     config.protocols.http3_enabled,
                     config.tls.clone(),
                     config.listen_addr.clone(),
@@ -53,7 +53,10 @@ impl UnifiedServer {
                         .as_ref()
                         .cloned()
                         .unwrap_or_default(),
-                )
+                );
+                // Drop the lock explicitly
+                drop(config);
+                result
             };
 
             if http3_enabled {

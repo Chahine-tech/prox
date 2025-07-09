@@ -55,11 +55,11 @@ impl QuicheConfig {
         // Load TLS certificate and private key
         config
             .load_cert_chain_from_pem_file(cert_path)
-            .with_context(|| format!("Failed to load certificate from {}", cert_path))?;
+            .with_context(|| format!("Failed to load certificate from {cert_path}"))?;
 
         config
             .load_priv_key_from_pem_file(key_path)
-            .with_context(|| format!("Failed to load private key from {}", key_path))?;
+            .with_context(|| format!("Failed to load private key from {key_path}"))?;
 
         // Enable qlog for debugging (optional)
         config.enable_dgram(true, 1024, 1024);

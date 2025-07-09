@@ -92,7 +92,7 @@ impl Http3Handler {
         // Reconstruct full URI if authority and scheme are present
         if let (Some(auth), Some(sch)) = (authority, scheme) {
             let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
-            let full_uri = format!("{}://{}{}", sch, auth, path_and_query);
+            let full_uri = format!("{sch}://{auth}{path_and_query}");
             uri = Uri::try_from(full_uri).context("Failed to construct full URI")?;
         }
 

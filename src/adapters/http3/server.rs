@@ -27,7 +27,7 @@ impl Http3Server {
         // Create UDP socket for QUIC
         let socket = UdpSocket::bind(bind_addr)
             .await
-            .with_context(|| format!("Failed to bind UDP socket to {}", bind_addr))?;
+            .with_context(|| format!("Failed to bind UDP socket to {bind_addr}"))?;
 
         tracing::info!("HTTP/3 server bound to UDP {}", bind_addr);
 
