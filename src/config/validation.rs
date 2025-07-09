@@ -424,7 +424,7 @@ impl ConfigValidator {
         // Validate email format
         if !Self::is_valid_email(&config.email) {
             return Err(ValidationError::InvalidAcme {
-                message: format!("Invalid email address: {}", config.email),
+                message: format!("Invalid email address: {email}", email = config.email),
             });
         }
 
@@ -586,12 +586,18 @@ impl ConfigValidator {
 
     /// Basic email validation
     fn is_valid_email(email: &str) -> bool {
+        // Using .unwrap() here is acceptable because the regex pattern is a compile-time constant
+        // and is guaranteed to be valid. If this pattern is invalid, it's a programmer error
+        // that should be caught during development.
         let email_regex = Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap();
         email_regex.is_match(email)
     }
 
     /// Basic domain name validation
     fn is_valid_domain(domain: &str) -> bool {
+        // Using .unwrap() here is acceptable because the regex pattern is a compile-time constant
+        // and is guaranteed to be valid. If this pattern is invalid, it's a programmer error
+        // that should be caught during development.
         let domain_regex = Regex::new(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$").unwrap();
         domain_regex.is_match(domain) && domain.len() <= 253
     }
@@ -600,7 +606,7 @@ impl ConfigValidator {
     fn format_multiple_errors(errors: Vec<ValidationError>) -> String {
         let mut message = format!("Found {} validation error(s):\n", errors.len());
         for (i, error) in errors.iter().enumerate() {
-            message.push_str(&format!("  {}. {}\n", i + 1, error));
+            message.push_str(&format!("  {}. {error}\n", i + 1));
         }
         message
     }

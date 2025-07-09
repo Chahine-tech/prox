@@ -131,7 +131,7 @@ impl AcmeService {
         let directory_url = self.get_directory_url();
         let (account, _credentials) = Account::create(
             &NewAccount {
-                contact: &[&format!("mailto:{}", self.config.email)],
+                contact: &[&format!("mailto:{email}", email = self.config.email)],
                 terms_of_service_agreed: true,
                 only_return_existing: false,
             },

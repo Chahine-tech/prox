@@ -24,6 +24,7 @@ use crate::adapters::acme::AcmeService;
 use crate::adapters::file_system::TowerFileSystem;
 use crate::adapters::http_client::HyperHttpClient;
 use crate::adapters::http_handler::HyperHandler;
+use crate::adapters::middleware;
 use crate::config::models::ServerConfig;
 use crate::core::ProxyService;
 use crate::metrics::{RequestTimer, increment_request_total};
@@ -140,7 +141,7 @@ impl HyperServer {
                         };
 
                         // Timer will record duration when dropped
-                        let _timer = RequestTimer::new(path.clone(), method.clone());
+                        let _timer = RequestTimer::new(&path, &method);
 
                         // Check if shutdown is requested
                         if app_state.shutdown_token.is_shutdown_requested() {
@@ -170,6 +171,9 @@ impl HyperServer {
                 },
             )
             .with_state(self.app_state.clone())
+            .layer(axum::middleware::from_fn(
+                middleware::create_alt_svc_middleware(self.app_state.config_holder.clone()),
+            ))
             .layer(self.prometheus_layer.clone())
             .layer(TraceLayer::new_for_http())
     }

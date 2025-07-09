@@ -1,0 +1,46 @@
+listen_addr: "0.0.0.0:8080"
+
+# Protocol configuration
+protocols:
+  http2_enabled: true
+  websocket_enabled: true
+  http2_max_frame_size: 16384
+  http2_max_concurrent_streams: 100
+
+# Health check configuration
+health_check:
+  enabled: true
+  interval_secs: 30
+  timeout_secs: 5
+  path: "/health"
+  unhealthy_threshold: 3
+  healthy_threshold: 2
+
+routes:
+  "/":  # Root route that redirects to /static
+    type: "redirect"
+    target: "/static"
+    status_code: 302
+
+  "/static":  # Static file serving
+    type: "static"
+    root: "./static"
+
+  "/api":  # API proxying
+    type: "proxy"
+    target: "https://httpbin.org"
+    path_rewrite: "/"
+
+  "/ws":  # WebSocket route
+    type: "websocket"
+    target: "ws://echo.websocket.org"
+    max_frame_size: 1048576  # 1MB
+    max_message_size: 10485760  # 10MB
+
+  "/load-balance":  # Load balancing
+    type: "load_balance"
+    targets:
+      - "https://httpbin.org"
+      - "https://postman-echo.com"
+    strategy: "round_robin"
+    path_rewrite: "/"

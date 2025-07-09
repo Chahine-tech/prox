@@ -98,8 +98,12 @@ pub enum RouteRateLimiter {
 impl RouteRateLimiter {
     /// Creates a new `RouteRateLimiter` based on the provided `RateLimitConfig`.
     pub fn new(config: &RateLimitConfig) -> Result<Self, String> {
-        let period_duration = humantime::parse_duration(&config.period)
-            .map_err(|e| format!("Invalid period string '{}': {}", config.period, e))?;
+        let period_duration = humantime::parse_duration(&config.period).map_err(|e| {
+            format!(
+                "Invalid period string '{period}': {e}",
+                period = config.period
+            )
+        })?;
 
         let quota_requests = NonZeroU32::new(config.requests as u32)
             .ok_or_else(|| "Rate limit 'requests' must be greater than 0".to_string())?;

@@ -114,11 +114,11 @@ pub struct RequestTimer {
 }
 
 impl RequestTimer {
-    pub fn new(path: String, method: String) -> Self {
+    pub fn new(path: &str, method: &str) -> Self {
         Self {
             start: Instant::now(),
-            path,
-            method,
+            path: path.to_string(),
+            method: method.to_string(),
         }
     }
 }
@@ -137,12 +137,12 @@ pub struct BackendRequestTimer {
 }
 
 impl BackendRequestTimer {
-    pub fn new(backend: String, path: String, method: String) -> Self {
+    pub fn new(backend: &str, path: &str, method: &str) -> Self {
         Self {
             start: Instant::now(),
-            backend,
-            path,
-            method,
+            backend: backend.to_string(),
+            path: path.to_string(),
+            method: method.to_string(),
         }
     }
 }

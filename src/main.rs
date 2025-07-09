@@ -9,9 +9,9 @@ use std::path::Path;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 
 use prox::{
-    HealthChecker, HyperHttpClient, HyperServer, ProxyService, TowerFileSystem,
-    config::loader::load_config, config::models::ServerConfig, ports::http_server::HttpServer,
-    tracing_setup, utils::graceful_shutdown::GracefulShutdown,
+    HealthChecker, HyperHttpClient, ProxyService, TowerFileSystem, UnifiedServer,
+    config::loader::load_config, config::models::ServerConfig, tracing_setup,
+    utils::graceful_shutdown::GracefulShutdown,
 };
 
 #[derive(Parser, Debug)]
@@ -93,7 +93,12 @@ async fn main() -> Result<()> {
     let http_client: Arc<HyperHttpClient> = Arc::new(HyperHttpClient::new());
     let file_system: Arc<TowerFileSystem> = Arc::new(TowerFileSystem::new());
 
-    let initial_proxy_service = Arc::new(ProxyService::new(config_holder.read().unwrap().clone()));
+    let initial_proxy_service = Arc::new(ProxyService::new(
+        config_holder
+            .read()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire config read lock: {}", e))?
+            .clone(),
+    ));
     let proxy_service_holder = Arc::new(RwLock::new(initial_proxy_service.clone()));
 
     // Health Checker Management
@@ -103,13 +108,21 @@ async fn main() -> Result<()> {
     {
         // Scope for initial health checker start
         let mut handle_guard = health_checker_handle_arc_mutex.lock().await;
-        let current_config = config_holder.read().unwrap().clone();
+        let current_config = config_holder
+            .read()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire config read lock: {}", e))?
+            .clone();
         if current_config.health_check.enabled {
             tracing::info!("Starting initial health checker...");
 
             // Create HealthChecker directly instead of using utility function
             let health_checker = HealthChecker::new(
-                proxy_service_holder.read().unwrap().clone(),
+                proxy_service_holder
+                    .read()
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to acquire proxy service read lock: {}", e)
+                    })?
+                    .clone(),
                 http_client.clone(),
             );
 
@@ -241,16 +254,36 @@ async fn main() -> Result<()> {
                     tracing::info!("Successfully loaded new configuration.");
 
                     {
-                        let mut config_w = config_holder_clone.write().unwrap();
-                        *config_w = new_config_arc.clone();
-                        tracing::info!("Global ServerConfig Arc updated.");
+                        match config_holder_clone.write() {
+                            Ok(mut config_w) => {
+                                *config_w = new_config_arc.clone();
+                                tracing::info!("Global ServerConfig Arc updated.");
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to acquire config write lock during reload: {}",
+                                    e
+                                );
+                                continue;
+                            }
+                        }
                     }
 
                     let new_proxy_service = Arc::new(ProxyService::new(new_config_arc.clone()));
                     {
-                        let mut proxy_s_w = proxy_service_holder_clone.write().unwrap();
-                        *proxy_s_w = new_proxy_service.clone();
-                        tracing::info!("Global ProxyService Arc updated.");
+                        match proxy_service_holder_clone.write() {
+                            Ok(mut proxy_s_w) => {
+                                *proxy_s_w = new_proxy_service.clone();
+                                tracing::info!("Global ProxyService Arc updated.");
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to acquire proxy service write lock during reload: {}",
+                                    e
+                                );
+                                continue;
+                            }
+                        }
                     }
 
                     // Restart HealthChecker
@@ -320,32 +353,51 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Create the HTTP server
-    let server = HyperServer::with_dependencies(
+    // Create the unified server (supports HTTP/1.1, HTTP/2, and HTTP/3)
+    let server = UnifiedServer::new(
         proxy_service_holder.clone(),
         config_holder.clone(),
         http_client.clone(),
         file_system.clone(),
         health_checker_handle_arc_mutex.clone(), // Pass the health checker handle
         graceful_shutdown.clone(),
-    );
+    )
+    .await?;
 
     // Log initial routes from the config_holder
     {
-        let ch = config_holder.read().unwrap();
+        let ch = config_holder.read().map_err(|e| {
+            anyhow::anyhow!("Failed to acquire config read lock for logging: {}", e)
+        })?;
         for (prefix, route) in &ch.routes {
             tracing::info!("Configured route: {} -> {:?}", prefix, route);
         }
+
+        let protocols = &ch.protocols;
         tracing::info!(
-            "Starting server on {} (TLS enabled: {})",
+            "Starting server on {} (TLS enabled: {}, HTTP/2: {}, HTTP/3: {}, WebSocket: {})",
             ch.listen_addr,
-            ch.tls.is_some()
+            ch.tls.is_some(),
+            protocols.http2_enabled,
+            protocols.http3_enabled,
+            protocols.websocket_enabled
         );
+
         println!(
-            "Server listening on {} (TLS enabled: {})",
+            "Server listening on {} (TLS: {}, HTTP/2: {}, HTTP/3: {}, WebSocket: {})",
             ch.listen_addr,
-            ch.tls.is_some()
+            ch.tls.is_some(),
+            protocols.http2_enabled,
+            protocols.http3_enabled,
+            protocols.websocket_enabled
         );
+
+        if protocols.http3_enabled {
+            if let Some(h3_addr) = server.http3_local_addr() {
+                tracing::info!("HTTP/3 server listening on UDP {h3_addr}");
+                println!("HTTP/3 server listening on UDP {h3_addr}");
+            }
+        }
     }
 
     // Run the server and wait for shutdown
