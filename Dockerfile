@@ -4,10 +4,16 @@ FROM rustlang/rust:nightly AS builder
 # Set working directory
 WORKDIR /usr/src/prox
 
-# Install build dependencies (if any, e.g., for specific crates like openssl-sys)
+# Install build dependencies for quiche (HTTP/3) and other crates
+# cmake and build-essential are required for quiche's BoringSSL build
+# pkg-config and libssl-dev are for general SSL/TLS support
+# ca-certificates for certificate verification
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
+    cmake \
+    build-essential \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Cargo.toml and Cargo.lock
