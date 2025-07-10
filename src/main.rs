@@ -61,14 +61,8 @@ async fn main() -> Result<()> {
         _ => unreachable!(),
     }
 
-    // Install the crypto provider first thing.
-    // Get the aws-lc-rs provider instance.
     let provider = rustls::crypto::aws_lc_rs::default_provider();
     if let Err(e) = rustls::crypto::CryptoProvider::install_default(provider) {
-        // If install_default fails, it might be because a provider (possibly aws-lc-rs itself)
-        // was already installed, perhaps concurrently or by another part of the application.
-        // We log this as a warning. Rustls will panic later if no provider is available
-        // when it's needed (e.g. creating TLS configs).
         tracing::warn!(
             "CryptoProvider::install_default for aws-lc-rs reported an error: {:?}. \
             This can happen if a provider was already installed. \
@@ -101,12 +95,10 @@ async fn main() -> Result<()> {
     ));
     let proxy_service_holder = Arc::new(RwLock::new(initial_proxy_service.clone()));
 
-    // Health Checker Management
     let health_checker_handle_arc_mutex =
         Arc::new(TokioMutex::new(None::<tokio::task::JoinHandle<()>>));
 
     {
-        // Scope for initial health checker start
         let mut handle_guard = health_checker_handle_arc_mutex.lock().await;
         let current_config = config_holder
             .read()
@@ -115,7 +107,6 @@ async fn main() -> Result<()> {
         if current_config.health_check.enabled {
             tracing::info!("Starting initial health checker...");
 
-            // Create HealthChecker directly instead of using utility function
             let health_checker = HealthChecker::new(
                 proxy_service_holder
                     .read()
@@ -154,26 +145,22 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         let (notify_tx, mut notify_rx) = mpsc::channel::<()>(10);
 
-        // Determine the directory to watch (parent of the config file)
         let config_file_as_path = Path::new(&config_path_for_watcher);
         let directory_to_watch = config_file_as_path
             .parent()
-            .filter(|p| !p.as_os_str().is_empty()) // Ensure parent is not an empty path
-            .unwrap_or_else(|| Path::new(".")) // Default to current directory if no parent or parent is empty
-            .to_path_buf(); // Owned PathBuf
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
 
-        // Clone the config file path specifically for the closure, as the closure is `move`
         let config_file_path_for_closure = config_path_for_watcher.clone();
 
         let mut watcher = match notify::recommended_watcher(
             move |res: Result<notify::Event, notify::Error>| {
-                // config_file_path_for_closure is moved into this closure.
                 match res {
                     Ok(event) => {
                         let config_file_name_to_check = Path::new(&config_file_path_for_closure)
                             .file_name()
                             .unwrap_or_default();
-                        // Check if the event kind is relevant and if it pertains to the specific config file
                         if (event.kind.is_modify()
                             || event.kind.is_create()
                             || event.kind.is_remove())
@@ -186,7 +173,6 @@ async fn main() -> Result<()> {
                                 event.kind
                             );
                             if notify_tx.try_send(()).is_err() {
-                                // Use tracing::warn! for warnings
                                 tracing::warn!(
                                     "Config reload signal channel (internal to watcher) full or disconnected."
                                 );
@@ -286,14 +272,10 @@ async fn main() -> Result<()> {
                         }
                     }
 
-                    // Restart HealthChecker
                     let mut handle_guard = health_handle_for_watcher.lock().await;
                     if let Some(old_handle) = handle_guard.take() {
                         tracing::info!("Aborting previous health checker task...");
                         old_handle.abort();
-                        // Note: We don't explicitly await the old_handle here for simplicity,
-                        // abort() signals termination. If precise shutdown confirmation is needed,
-                        // old_handle.await could be used with error checking for cancellation.
                     }
 
                     if new_config_arc.health_check.enabled {
@@ -301,7 +283,6 @@ async fn main() -> Result<()> {
                             "Starting new health checker task with updated configuration..."
                         );
 
-                        // Create HealthChecker directly instead of using utility function
                         let health_checker = HealthChecker::new(
                             new_proxy_service.clone(),
                             http_client_for_watcher.clone(),

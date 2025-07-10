@@ -33,7 +33,6 @@ use crate::utils::connection_tracker::{ConnectionInfo, ConnectionTracker};
 use crate::utils::graceful_shutdown::{GracefulShutdown, ShutdownToken};
 use crate::utils::health_checker_utils::spawn_health_checker_task;
 
-// RAII guard for request tracking that automatically decrements on drop
 struct ConnectionRequestGuard {
     connection_info: Arc<ConnectionInfo>,
 }
@@ -44,7 +43,6 @@ impl Drop for ConnectionRequestGuard {
     }
 }
 
-// Define a struct to hold all shared state for Axum handlers
 #[derive(Clone)]
 struct AppState {
     proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>,
@@ -100,8 +98,6 @@ impl HyperServer {
         );
 
         let metrics_handle_for_route = self.prometheus_handle.clone();
-
-        // Clone app_state for use in the fallback closure
         let app_state_for_fallback = self.app_state.clone();
 
         Router::new()
@@ -222,7 +218,10 @@ async fn update_config_handler(
 
     // 1. Update Config Holder
     {
-        let mut config_w = app_state.config_holder.write().unwrap();
+        let mut config_w = app_state.config_holder.write().map_err(|e| {
+            tracing::error!("Failed to acquire config write lock: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to update configuration").into_response()
+        })?;
         *config_w = new_config_arc.clone();
         tracing::info!("(API Reload) Global ServerConfig Arc updated.");
     }
@@ -230,7 +229,10 @@ async fn update_config_handler(
     // 2. Update ProxyService Holder
     let new_proxy_service = Arc::new(ProxyService::new(new_config_arc.clone()));
     {
-        let mut proxy_s_w = app_state.proxy_service_holder.write().unwrap();
+        let mut proxy_s_w = app_state.proxy_service_holder.write().map_err(|e| {
+            tracing::error!("Failed to acquire proxy service write lock: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to update proxy service").into_response()
+        })?;
         *proxy_s_w = new_proxy_service.clone();
         tracing::info!("(API Reload) Global ProxyService Arc updated.");
     }
@@ -268,7 +270,9 @@ impl HttpServer for HyperServer {
 
         // Read values from config_guard and then drop it
         let (listen_addr_str, tls_config_opt_owned, protocols_config) = {
-            let config_guard = self.app_state.config_holder.read().unwrap();
+            let config_guard = self.app_state.config_holder.read().map_err(|e| {
+                anyhow::anyhow!("Failed to acquire config read lock: {}", e)
+            })?;
             let addr_str = config_guard.listen_addr.clone();
             let tls_opt = config_guard.tls.clone(); // Clone the Option<TlsConfig>
             let protocols = config_guard.protocols.clone(); // Clone the ProtocolConfig

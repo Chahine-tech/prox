@@ -27,7 +27,6 @@ impl UnifiedServer {
         health_checker_handle: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
         graceful_shutdown: Arc<GracefulShutdown>,
     ) -> Result<Self> {
-        // Create the traditional HTTP server (handles HTTP/1.1 and HTTP/2 over TCP)
         let http_server = HyperServer::with_dependencies(
             proxy_service_holder.clone(),
             config_holder.clone(),
@@ -37,7 +36,6 @@ impl UnifiedServer {
             graceful_shutdown.clone(),
         );
 
-        // Check if HTTP/3 is enabled and create HTTP/3 server if needed
         let http3_server = {
             let (http3_enabled, tls_config, listen_addr, http3_config) = {
                 let config = config_holder.read().map_err(|e| {
@@ -54,18 +52,14 @@ impl UnifiedServer {
                         .cloned()
                         .unwrap_or_default(),
                 );
-                // Drop the lock explicitly
                 drop(config);
                 result
             };
 
             if http3_enabled {
-                // HTTP/3 requires TLS
                 if let Some(ref tls_config) = tls_config {
                     let (cert_path, key_path) = if let Some(acme_config) = &tls_config.acme {
                         if acme_config.enabled {
-                            // For ACME, we would need to get the certificate paths
-                            // This is simplified - in practice, you'd coordinate with ACME service
                             return Err(anyhow!(
                                 "ACME with HTTP/3 requires coordination - not implemented in this example"
                             ));
@@ -80,7 +74,6 @@ impl UnifiedServer {
                         return Err(anyhow!("HTTP/3 requires TLS certificate configuration"));
                     };
 
-                    // Parse the listen address and create UDP address for HTTP/3
                     let tcp_addr: SocketAddr =
                         listen_addr.parse().context("Invalid listen address")?;
                     let udp_addr = SocketAddr::new(tcp_addr.ip(), tcp_addr.port());

@@ -7,24 +7,16 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 pub const PROX_BACKEND_HEALTH_STATUS: &str = "prox_backend_health_status";
-
-// --- General Request Metrics ---
 pub const PROX_REQUESTS_TOTAL: &str = "prox_requests_total";
 pub const PROX_REQUEST_DURATION_SECONDS: &str = "prox_request_duration_seconds";
-
-// --- Backend Specific Metrics ---
 pub const PROX_BACKEND_REQUESTS_TOTAL: &str = "prox_backend_requests_total";
 pub const PROX_BACKEND_REQUEST_DURATION_SECONDS: &str = "prox_backend_request_duration_seconds";
 
-// Using a Lazy static HashMap to store gauges per backend.
-// The key could be the backend URL or a unique identifier.
-// The value is the health status (1 for healthy, 0 for unhealthy).
 pub static BACKEND_HEALTH_GAUGES: Lazy<Mutex<HashMap<String, f64>>> = Lazy::new(|| {
     describe_gauge!(
         PROX_BACKEND_HEALTH_STATUS,
         "Health status of individual backends (1 for healthy, 0 for unhealthy)"
     );
-    // Also describe other metrics
     describe_counter!(
         PROX_REQUESTS_TOTAL,
         Unit::Count,
@@ -50,12 +42,14 @@ pub static BACKEND_HEALTH_GAUGES: Lazy<Mutex<HashMap<String, f64>>> = Lazy::new(
 
 pub fn set_backend_health_status(backend_id: &str, is_healthy: bool) {
     let health_value = if is_healthy { 1.0 } else { 0.0 };
-    // Update the shared map
-    let mut gauges = BACKEND_HEALTH_GAUGES.lock().unwrap();
-    gauges.insert(backend_id.to_string(), health_value);
+    if let Ok(mut gauges) = BACKEND_HEALTH_GAUGES.lock() {
+        gauges.insert(backend_id.to_string(), health_value);
+    } else {
+        tracing::error!("Failed to acquire lock for backend health gauges");
+        return;
+    }
 
-    // Emit the metric using the metrics crate.
-    let backend_label = backend_id.to_string(); // Create the string before the macro call
+    let backend_label = backend_id.to_string();
     gauge!(PROX_BACKEND_HEALTH_STATUS, "backend" => backend_label).set(health_value);
 }
 

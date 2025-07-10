@@ -24,21 +24,18 @@ impl Http3Server {
         key_path: &str,
         proxy_service_holder: Arc<RwLock<Arc<ProxyService>>>,
     ) -> Result<Self> {
-        // Create UDP socket for QUIC
         let socket = UdpSocket::bind(bind_addr)
             .await
             .with_context(|| format!("Failed to bind UDP socket to {bind_addr}"))?;
 
         tracing::info!("HTTP/3 server bound to UDP {}", bind_addr);
 
-        // Create connection manager
         let connection_manager = Arc::new(ConnectionManager::new(
             http3_config.clone(),
             cert_path,
             key_path,
         )?);
 
-        // Create HTTP/3 handler
         let handler = Http3Handler::new(proxy_service_holder, connection_manager.clone());
 
         Ok(Self {
@@ -52,10 +49,9 @@ impl Http3Server {
     pub async fn run(&self) -> Result<()> {
         tracing::info!("Starting HTTP/3 server on {}", self.local_addr);
 
-        let mut buffer = vec![0; 65536]; // Maximum UDP packet size
+        let mut buffer = vec![0; 65536];
 
         loop {
-            // Receive UDP packet
             let (len, peer_addr) = self
                 .socket
                 .recv_from(&mut buffer)
@@ -66,7 +62,6 @@ impl Http3Server {
 
             tracing::debug!("Received {} bytes from {}", len, peer_addr);
 
-            // Process the packet
             if let Err(e) = self.process_packet(packet, peer_addr).await {
                 tracing::error!("Error processing packet from {}: {}", peer_addr, e);
             }
@@ -74,25 +69,21 @@ impl Http3Server {
     }
 
     async fn process_packet(&self, packet: &[u8], peer_addr: SocketAddr) -> Result<()> {
-        // Parse QUIC packet header to extract connection ID
         let mut packet_buf = packet.to_vec();
         let hdr = quiche::Header::from_slice(&mut packet_buf, quiche::MAX_CONN_ID_LEN)
             .context("Failed to parse QUIC header")?;
 
         let conn_id = hdr.dcid.clone();
 
-        // Get or create connection
         self.connection_manager
             .get_or_create_connection(&conn_id, None, self.local_addr, peer_addr)
             .await?;
 
-        // Process connection events
         let events = self
             .connection_manager
             .process_connection_events(&conn_id)
             .await?;
 
-        // Handle HTTP/3 events
         for (stream_id, event) in events {
             if let Err(e) = self.handle_h3_event(&conn_id, stream_id, event).await {
                 tracing::error!("Error handling HTTP/3 event: {}", e);
@@ -113,38 +104,28 @@ impl Http3Server {
 
                 let mut body = None;
                 if more_frames {
-                    // Collect body data
                     let body_data = Vec::new();
-                    // Note: In a real implementation, you'd need to handle streaming body data
-                    // This is simplified for demonstration
                     body = Some(bytes::Bytes::from(body_data));
                 }
 
-                // Handle the request
                 self.handler
                     .handle_h3_request(conn_id, stream_id, list, body)
                     .await?;
             }
             H3Event::Data => {
                 tracing::debug!("Received data on stream {}", stream_id);
-                // Handle additional data - this would be part of the request body
-                // In a complete implementation, you'd accumulate this data
             }
             H3Event::Finished => {
                 tracing::debug!("Stream {} finished", stream_id);
-                // Stream is complete
             }
             H3Event::Reset(error_code) => {
                 tracing::warn!("Stream {} reset with error code: {}", stream_id, error_code);
-                // Handle stream reset
             }
             H3Event::PriorityUpdate => {
                 tracing::debug!("Received priority update on stream {}", stream_id);
-                // Handle priority update
             }
             H3Event::GoAway => {
                 tracing::info!("Received GOAWAY");
-                // Handle graceful connection shutdown
             }
         }
 
@@ -187,7 +168,6 @@ mod tests {
         let result = quiche::Header::from_slice(&mut packet, quiche::MAX_CONN_ID_LEN);
         assert!(result.is_ok());
 
-        // Using unwrap() in tests is acceptable since we want the test to fail if parsing fails
         let header = result.unwrap();
         assert_eq!(header.ty, quiche::Type::Initial);
     }
@@ -196,14 +176,13 @@ mod tests {
     fn test_config_validation() {
         let config = create_test_config();
 
-        // Test that config values are reasonable
         assert!(config.max_data > 0);
         assert!(config.max_stream_data > 0);
         assert!(config.max_streams_bidi > 0);
         assert!(config.max_idle_timeout > 0);
 
         if let Some(max_packet_size) = config.max_packet_size {
-            assert!(max_packet_size >= 1200); // Minimum UDP packet size for QUIC
+            assert!(max_packet_size >= 1200);
         }
     }
 
@@ -211,7 +190,6 @@ mod tests {
     fn test_http3_config_congestion_control() {
         let config = create_test_config();
 
-        // Test that congestion control is set correctly
         match config.congestion_control {
             Http3CongestionControl::Cubic => { /* Valid variant */ }
             Http3CongestionControl::Reno => { /* Valid variant */ }

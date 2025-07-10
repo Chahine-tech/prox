@@ -16,19 +16,17 @@ use regex::Regex;
 use serde_json;
 use std::net::SocketAddr;
 
-// NEW: Helper function to substitute placeholders in a string
 fn substitute_placeholders_in_text(
     text: &str,
-    ctx: &RequestConditionContext, // Contains uri_path
+    ctx: &RequestConditionContext,
     client_ip_str: &str,
 ) -> String {
-    let timestamp_iso = Utc::now().to_rfc3339(); // {timestamp_iso}
+    let timestamp_iso = Utc::now().to_rfc3339();
     text.replace("{uri_path}", &ctx.uri_path)
         .replace("{timestamp_iso}", &timestamp_iso)
         .replace("{client_ip}", client_ip_str)
 }
 
-// NEW: Helper function to substitute placeholders in serde_json::Value
 fn substitute_placeholders_in_json_value(
     json_value: &mut serde_json::Value,
     ctx: &RequestConditionContext,
@@ -48,23 +46,19 @@ fn substitute_placeholders_in_json_value(
                 substitute_placeholders_in_json_value(val, ctx, client_ip_str);
             }
         }
-        _ => {} // Do nothing for Null, Bool, Number
+        _ => {}
     }
 }
 
-// NEW: Struct to hold request data for condition checking
-#[derive(Clone, Debug)] // Should be Send + Sync implicitly as it owns its data
+#[derive(Clone, Debug)]
 struct RequestConditionContext {
     uri_path: String,
     method: hyper::Method,
     headers: hyper::HeaderMap,
-    // client_ip: Option<SocketAddr>, // Add if client IP is needed for conditions
 }
 
 impl RequestConditionContext {
     fn from_request(req: &Request<AxumBody>) -> Self {
-        // Note: Cloning headers and method is relatively cheap.
-        // URI path is already a String via .path().to_string().
         Self {
             uri_path: req.uri().path().to_string(),
             method: req.method().clone(),
@@ -77,13 +71,12 @@ use crate::adapters::file_system::TowerFileSystem;
 use crate::adapters::http_client::HyperHttpClient;
 use crate::config::{
     BodyActions, HeaderActions, LoadBalanceStrategy, RateLimitConfig, RequestCondition, RouteConfig,
-}; // Removed HeaderCondition
+};
 use crate::core::{LoadBalancerFactory, ProxyService, RouteRateLimiter};
 use crate::ports::file_system::FileSystem;
 use crate::ports::http_client::{HttpClient, HttpClientError};
 use crate::ports::http_server::{HandlerError, HttpHandler};
 
-// NEW: Struct to hold arguments for proxy/load_balance handlers
 struct ProxyHandlerArgs<'a> {
     target: Option<&'a String>,
     targets: Option<&'a Vec<String>>,
@@ -117,30 +110,22 @@ impl HyperHandler {
             proxy_service_holder,
             http_client,
             file_system,
-            rate_limiters: Arc::new(Mutex::new(HashMap::new())), // Initialize here
+            rate_limiters: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    // Helper function to compute the final path after considering rewrite rules
-    fn compute_final_path(original_path: &str, prefix: &str, path_rewrite: Option<&str>) -> String {
-        if let Some(rewrite_template) = path_rewrite {
-            let stripped_path = if let Some(stripped) = original_path.strip_prefix(prefix) {
-                stripped
-            } else {
-                // Log a warning or handle the case where the prefix is not found
-                tracing::warn!(
-                    original_path = %original_path, // Using % for Display trait
-                    prefix = %prefix,
-                    "Original path does not start with the expected prefix during path rewrite. This might indicate an internal logic issue."
-                );
-                // Fallback to an empty path or handle as per application logic
-                return String::new(); // Or handle appropriately
-            };
-            // If rewrite_template is "/", use the stripped_path as-is, effectively removing the original prefix
-            // and not adding any new prefix from the rewrite_template itself.
-            // For example, if original_path is "/api/v1/users", prefix is "/api/v1", and rewrite_template is "/",
-            // then stripped_path is "/users", and final_path becomes "/users".
-            if rewrite_template == "/" {
+    fn compute_final_path(original_path: &str, prefix: &str, path_rewrite: Option<&str>) -> String {            if let Some(rewrite_template) = path_rewrite {
+                let stripped_path = if let Some(stripped) = original_path.strip_prefix(prefix) {
+                    stripped
+                } else {
+                    tracing::warn!(
+                        original_path = %original_path,
+                        prefix = %prefix,
+                        "Original path does not start with the expected prefix during path rewrite. This might indicate an internal logic issue."
+                    );
+                    return String::new();
+                };
+                if rewrite_template == "/" {
                 stripped_path.to_string()
             } else {
                 format!(
@@ -150,7 +135,6 @@ impl HyperHandler {
                 )
             }
         } else {
-            // If no path_rewrite, the path relative to the prefix is used.
             original_path
                 .strip_prefix(prefix)
                 .unwrap_or(original_path)
@@ -193,18 +177,9 @@ impl HyperHandler {
 
         tracing::debug!("Redirecting to: {} with status: {}", redirect_url, status);
 
-        Response::builder()
-            .status(status)
-            .header("Location", redirect_url)
-            .body(AxumBody::empty())
-            .map(IntoResponse::into_response)
-            .unwrap_or_else(|err| {
-                tracing::error!("Failed to build redirect response: {}", err);
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
-            })
+        Self::build_redirect_response(status, redirect_url)
     }
 
-    // UPDATED: check_condition now takes RequestConditionContext
     fn check_condition(ctx: &RequestConditionContext, condition_config: &RequestCondition) -> bool {
         if let Some(path_regex_str) = &condition_config.path_matches {
             if let Ok(regex) = Regex::new(path_regex_str) {
@@ -271,13 +246,10 @@ impl HyperHandler {
         true // All conditions met or no conditions specified
     }
 
-    // UPDATED: apply_header_actions
     fn apply_header_actions(
         headers_to_modify: &mut hyper::HeaderMap,
         actions_config_opt: Option<&HeaderActions>,
         client_ip: Option<SocketAddr>,
-        // For request headers, this context is built from the req just before this call.
-        // For response headers, this context is built from the *initial* client request.
         condition_check_ctx: Option<&RequestConditionContext>,
     ) {
         if let Some(actions_config) = actions_config_opt {
@@ -287,8 +259,6 @@ impl HyperHandler {
                         return; // Condition not met, skip actions
                     }
                 } else {
-                    // If a condition is specified, a context must be provided.
-                    // This case should ideally be avoided by ensuring context is always passed if condition exists.
                     tracing::warn!(
                         "Condition specified for header actions, but no context provided for check. Skipping actions."
                     );
@@ -296,7 +266,6 @@ impl HyperHandler {
                 }
             }
 
-            // Proceed with actions if no condition or condition met
             for name in &actions_config.remove {
                 if let Ok(header_name) = HeaderName::from_bytes(name.as_bytes()) {
                     headers_to_modify.remove(header_name);
@@ -309,7 +278,6 @@ impl HyperHandler {
                             client_ip.map(|ip| ip.ip().to_string()).unwrap_or_default()
                         }
                         "{timestamp}" => Utc::now().to_rfc3339(),
-                        // Add other custom values here
                         _ => value_template.clone(),
                     };
                     if let Ok(header_value) = HeaderValue::from_str(&value_str) {
@@ -320,27 +288,23 @@ impl HyperHandler {
         }
     }
 
-    // UPDATED: apply_body_actions_to_request
     async fn apply_body_actions_to_request(
-        req: &mut Request<AxumBody>, // Still takes &mut Request to modify it
+        req: &mut Request<AxumBody>,
         actions_config_opt: Option<&BodyActions>,
-        client_ip: Option<SocketAddr>, // Added client_ip
+        client_ip: Option<SocketAddr>,
     ) -> Result<(), HandlerError> {
         if let Some(actions_config) = actions_config_opt {
-            // Create context from `req` *before* any potential body modification for condition checking.
-            let ctx = RequestConditionContext::from_request(req); // Context for conditions AND placeholders
+            let ctx = RequestConditionContext::from_request(req);
 
             if let Some(condition) = &actions_config.condition {
                 if !Self::check_condition(&ctx, condition) {
-                    return Ok(()); // Condition not met, skip actions
+                    return Ok(());
                 }
             }
 
-            // Prepare client_ip_str for placeholder substitution
             let client_ip_str = client_ip.map(|ip| ip.ip().to_string()).unwrap_or_default();
 
             if let Some(text_content_template) = &actions_config.set_text {
-                // Substitute placeholders in text_content
                 let final_text_content =
                     substitute_placeholders_in_text(text_content_template, &ctx, &client_ip_str);
 
@@ -352,7 +316,6 @@ impl HyperHandler {
                     HeaderValue::from(final_text_content.len()),
                 );
             } else if let Some(json_content_template) = &actions_config.set_json {
-                // Substitute placeholders in json_content
                 let mut final_json_content = json_content_template.clone();
                 substitute_placeholders_in_json_value(
                     &mut final_json_content,
@@ -386,44 +349,37 @@ impl HyperHandler {
         Ok(())
     }
 
-    // UPDATED: apply_body_actions_to_response
     async fn apply_body_actions_to_response(
-        response_to_modify: AxumResponse, // Renamed for clarity
+        response_to_modify: AxumResponse,
         actions_config_opt: Option<&BodyActions>,
-        // This context is built from the *initial* client request. Used for conditions AND placeholders.
         initial_req_ctx_opt: Option<&RequestConditionContext>,
-        client_ip: Option<SocketAddr>, // Added client_ip
+        client_ip: Option<SocketAddr>,
     ) -> Result<AxumResponse, HandlerError> {
         let actions_config = match actions_config_opt {
             Some(config) => config,
-            None => return Ok(response_to_modify), // No actions, return original
+            None => return Ok(response_to_modify),
         };
 
-        // Check condition if present
         if let Some(condition) = &actions_config.condition {
             match initial_req_ctx_opt {
                 Some(ctx) => {
                     if !Self::check_condition(ctx, condition) {
-                        return Ok(response_to_modify); // Condition not met
+                        return Ok(response_to_modify);
                     }
                 }
                 None => {
                     tracing::warn!(
                         "Condition specified for response body actions, but no context provided for check. Skipping actions."
                     );
-                    return Ok(response_to_modify); // No context for condition
+                    return Ok(response_to_modify);
                 }
             }
         }
 
-        // At this point, conditions are met or no conditions.
-        // Proceed with actions if set_text or set_json is defined. These need context for placeholders.
         if actions_config.set_text.is_none() && actions_config.set_json.is_none() {
-            // No actions that modify the body content are defined.
             return Ok(response_to_modify);
         }
 
-        // We need context for placeholders.
         let initial_req_ctx = match initial_req_ctx_opt {
             Some(ctx) => ctx,
             None => {
@@ -503,7 +459,13 @@ impl HyperHandler {
     }
 
     async fn handle_proxy(&self, args: ProxyHandlerArgs<'_>) -> AxumResponse {
-        let target = args.target.expect("Target is required for handle_proxy");
+        let target = match args.target {
+            Some(target) => target,
+            None => {
+                tracing::error!("Proxy route missing target configuration");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Proxy route missing target configuration").into_response();
+            }
+        };
         let mut req = args.req; // Make req mutable from args
         let original_path = req.uri().path().to_string();
         let query = req.uri().query().map_or("", |q| q).to_string();
@@ -584,10 +546,11 @@ impl HyperHandler {
                             HttpClientError::InvalidRequestError(_) => StatusCode::BAD_REQUEST,
                             HttpClientError::BackendError { .. } => StatusCode::BAD_GATEWAY,
                         };
-                        Response::builder()
-                            .status(status_code)
-                            .body(AxumBody::from(format!("Proxy request failed: {e}")))
-                            .unwrap()
+                        Self::build_response_with_fallback(
+                            status_code,
+                            format!("Proxy request failed: {e}"),
+                            "proxy error response"
+                        )
                     }
                 }
             }
@@ -597,21 +560,30 @@ impl HyperHandler {
                     target_uri_string,
                     err
                 );
-                Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(AxumBody::from("Failed to parse target URI"))
-                    .unwrap()
+                Self::build_response_with_fallback(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to parse target URI",
+                    "URI parsing failure"
+                )
             }
         }
     }
 
     async fn handle_load_balance(&self, args: ProxyHandlerArgs<'_>) -> AxumResponse {
-        let targets = args
-            .targets
-            .expect("Targets are required for handle_load_balance");
-        let strategy = args
-            .strategy
-            .expect("Strategy is required for handle_load_balance");
+        let targets = match args.targets {
+            Some(targets) => targets,
+            None => {
+                tracing::error!("Load balance route missing targets configuration");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Load balance route missing targets configuration").into_response();
+            }
+        };
+        let strategy = match args.strategy {
+            Some(strategy) => strategy,
+            None => {
+                tracing::error!("Load balance route missing strategy configuration");
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Load balance route missing strategy configuration").into_response();
+            }
+        };
         let mut req = args.req; // Make req mutable from args
 
         if targets.is_empty() {
@@ -730,10 +702,11 @@ impl HyperHandler {
                             HttpClientError::InvalidRequestError(_) => StatusCode::BAD_REQUEST,
                             HttpClientError::BackendError { .. } => StatusCode::BAD_GATEWAY,
                         };
-                        Response::builder()
-                            .status(status_code)
-                            .body(AxumBody::from(format!("Load balanced request failed: {e}")))
-                            .unwrap()
+                        Self::build_response_with_fallback(
+                            status_code,
+                            format!("Load balanced request failed: {e}"),
+                            "load balancer error response"
+                        )
                     }
                 }
             }
@@ -743,10 +716,11 @@ impl HyperHandler {
                     target_uri_string,
                     err
                 );
-                Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(AxumBody::from("Failed to parse load balanced target URI"))
-                    .unwrap()
+                Self::build_response_with_fallback(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to parse load balanced target URI",
+                    "load balancer URI parsing failure"
+                )
             }
         }
     }
@@ -836,6 +810,40 @@ impl HyperHandler {
             }
         }
     }
+
+    // Helper function to build responses with consistent error handling
+    fn build_response_with_fallback<T>(
+        status: StatusCode,
+        body: T,
+        error_context: &str,
+    ) -> AxumResponse
+    where
+        T: Into<AxumBody>,
+    {
+        Response::builder()
+            .status(status)
+            .body(body.into())
+            .unwrap_or_else(|_| {
+                tracing::error!("Failed to build response: {}", error_context);
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
+            })
+    }
+
+    // Helper function for redirect responses
+    fn build_redirect_response(
+        status: StatusCode,
+        location: String,
+    ) -> AxumResponse {
+        Response::builder()
+            .status(status)
+            .header("Location", location)
+            .body(AxumBody::empty())
+            .map(IntoResponse::into_response)
+            .unwrap_or_else(|err| {
+                tracing::error!("Failed to build redirect response: {}", err);
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
+            })
+    }
 }
 
 impl HttpHandler for HyperHandler {
@@ -901,8 +909,13 @@ impl HttpHandler for HyperHandler {
                                 temp_req_builder = temp_req_builder.header(name, value);
                             }
                             // Pass an empty body for the check, actual body is preserved.
-                            let temp_req_for_check =
-                                temp_req_builder.body(AxumBody::empty()).unwrap();
+                            let temp_req_for_check = match temp_req_builder.body(AxumBody::empty()) {
+                                Ok(req) => req,
+                                Err(e) => {
+                                    tracing::error!("Failed to build temporary request for rate limiting: {}", e);
+                                    return Ok((StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response());
+                                }
+                            };
 
                             match limiter.check(&temp_req_for_check, client_ip_info.as_ref()) {
                                 Ok(_) => {

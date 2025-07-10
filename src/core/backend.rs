@@ -172,13 +172,11 @@ mod tests {
 
     #[test]
     fn test_backend_url_valid() {
-        // Test valid HTTP URL
         let url = "http://example.com";
         let backend_url = BackendUrl::new(url).expect("Valid HTTP URL should parse");
         assert_eq!(backend_url.as_str(), url);
         assert!(!backend_url.is_secure());
 
-        // Test valid HTTPS URL
         let secure_url = "https://secure.example.com";
         let secure_backend_url = BackendUrl::new(secure_url).expect("Valid HTTPS URL should parse");
         assert_eq!(secure_backend_url.as_str(), secure_url);
@@ -187,18 +185,15 @@ mod tests {
 
     #[test]
     fn test_backend_url_invalid() {
-        // Test invalid URL (no scheme)
         let result = BackendUrl::new("example.com");
         assert!(result.is_err());
 
-        // Test with other invalid schemes
         let result = BackendUrl::new("ftp://example.com");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_backend_url_from_str() {
-        // Test FromStr implementation
         let url = "http://example.com";
         let backend_url: BackendUrl = url
             .parse()
@@ -208,7 +203,6 @@ mod tests {
 
     #[test]
     fn test_backend_url_display() {
-        // Test Display implementation
         let url = "http://example.com";
         let backend_url =
             BackendUrl::new(url).expect("Creating BackendUrl from valid string should succeed");
@@ -219,9 +213,8 @@ mod tests {
     fn test_backend_health_transitions() {
         let url = BackendUrl::new("http://example.com")
             .expect("Creating BackendUrl for health test should succeed");
-        let health = BackendHealth::new(url.clone()); // Pass clone of url if BackendHealth takes ownership, or just url if it takes a ref or copies
+        let health = BackendHealth::new(url.clone());
 
-        // Initial state
         assert_eq!(health.status(), HealthStatus::Healthy);
         assert_eq!(health.consecutive_successes(), 0);
         assert_eq!(health.consecutive_failures(), 0);
