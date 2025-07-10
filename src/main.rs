@@ -155,32 +155,29 @@ async fn main() -> Result<()> {
         let config_file_path_for_closure = config_path_for_watcher.clone();
 
         let mut watcher = match notify::recommended_watcher(
-            move |res: Result<notify::Event, notify::Error>| {
-                match res {
-                    Ok(event) => {
-                        let config_file_name_to_check = Path::new(&config_file_path_for_closure)
-                            .file_name()
-                            .unwrap_or_default();
-                        if (event.kind.is_modify()
-                            || event.kind.is_create()
-                            || event.kind.is_remove())
-                            && event.paths.iter().any(|p| {
-                                p.file_name().unwrap_or_default() == config_file_name_to_check
-                            })
-                        {
-                            tracing::debug!(
-                                "Config file event detected: {:?}, sending signal for reload.",
-                                event.kind
+            move |res: Result<notify::Event, notify::Error>| match res {
+                Ok(event) => {
+                    let config_file_name_to_check = Path::new(&config_file_path_for_closure)
+                        .file_name()
+                        .unwrap_or_default();
+                    if (event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove())
+                        && event
+                            .paths
+                            .iter()
+                            .any(|p| p.file_name().unwrap_or_default() == config_file_name_to_check)
+                    {
+                        tracing::debug!(
+                            "Config file event detected: {:?}, sending signal for reload.",
+                            event.kind
+                        );
+                        if notify_tx.try_send(()).is_err() {
+                            tracing::warn!(
+                                "Config reload signal channel (internal to watcher) full or disconnected."
                             );
-                            if notify_tx.try_send(()).is_err() {
-                                tracing::warn!(
-                                    "Config reload signal channel (internal to watcher) full or disconnected."
-                                );
-                            }
                         }
                     }
-                    Err(e) => tracing::error!("File watch error: {:?}", e),
                 }
+                Err(e) => tracing::error!("File watch error: {:?}", e),
             },
         ) {
             Ok(w) => w,

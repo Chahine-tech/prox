@@ -220,7 +220,11 @@ async fn update_config_handler(
     {
         let mut config_w = app_state.config_holder.write().map_err(|e| {
             tracing::error!("Failed to acquire config write lock: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to update configuration").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update configuration",
+            )
+                .into_response()
         })?;
         *config_w = new_config_arc.clone();
         tracing::info!("(API Reload) Global ServerConfig Arc updated.");
@@ -231,7 +235,11 @@ async fn update_config_handler(
     {
         let mut proxy_s_w = app_state.proxy_service_holder.write().map_err(|e| {
             tracing::error!("Failed to acquire proxy service write lock: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to update proxy service").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update proxy service",
+            )
+                .into_response()
         })?;
         *proxy_s_w = new_proxy_service.clone();
         tracing::info!("(API Reload) Global ProxyService Arc updated.");
@@ -270,9 +278,11 @@ impl HttpServer for HyperServer {
 
         // Read values from config_guard and then drop it
         let (listen_addr_str, tls_config_opt_owned, protocols_config) = {
-            let config_guard = self.app_state.config_holder.read().map_err(|e| {
-                anyhow::anyhow!("Failed to acquire config read lock: {}", e)
-            })?;
+            let config_guard = self
+                .app_state
+                .config_holder
+                .read()
+                .map_err(|e| anyhow::anyhow!("Failed to acquire config read lock: {}", e))?;
             let addr_str = config_guard.listen_addr.clone();
             let tls_opt = config_guard.tls.clone(); // Clone the Option<TlsConfig>
             let protocols = config_guard.protocols.clone(); // Clone the ProtocolConfig

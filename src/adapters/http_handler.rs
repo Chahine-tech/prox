@@ -114,18 +114,19 @@ impl HyperHandler {
         }
     }
 
-    fn compute_final_path(original_path: &str, prefix: &str, path_rewrite: Option<&str>) -> String {            if let Some(rewrite_template) = path_rewrite {
-                let stripped_path = if let Some(stripped) = original_path.strip_prefix(prefix) {
-                    stripped
-                } else {
-                    tracing::warn!(
-                        original_path = %original_path,
-                        prefix = %prefix,
-                        "Original path does not start with the expected prefix during path rewrite. This might indicate an internal logic issue."
-                    );
-                    return String::new();
-                };
-                if rewrite_template == "/" {
+    fn compute_final_path(original_path: &str, prefix: &str, path_rewrite: Option<&str>) -> String {
+        if let Some(rewrite_template) = path_rewrite {
+            let stripped_path = if let Some(stripped) = original_path.strip_prefix(prefix) {
+                stripped
+            } else {
+                tracing::warn!(
+                    original_path = %original_path,
+                    prefix = %prefix,
+                    "Original path does not start with the expected prefix during path rewrite. This might indicate an internal logic issue."
+                );
+                return String::new();
+            };
+            if rewrite_template == "/" {
                 stripped_path.to_string()
             } else {
                 format!(
@@ -463,7 +464,11 @@ impl HyperHandler {
             Some(target) => target,
             None => {
                 tracing::error!("Proxy route missing target configuration");
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Proxy route missing target configuration").into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Proxy route missing target configuration",
+                )
+                    .into_response();
             }
         };
         let mut req = args.req; // Make req mutable from args
@@ -549,7 +554,7 @@ impl HyperHandler {
                         Self::build_response_with_fallback(
                             status_code,
                             format!("Proxy request failed: {e}"),
-                            "proxy error response"
+                            "proxy error response",
                         )
                     }
                 }
@@ -563,7 +568,7 @@ impl HyperHandler {
                 Self::build_response_with_fallback(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Failed to parse target URI",
-                    "URI parsing failure"
+                    "URI parsing failure",
                 )
             }
         }
@@ -574,14 +579,22 @@ impl HyperHandler {
             Some(targets) => targets,
             None => {
                 tracing::error!("Load balance route missing targets configuration");
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Load balance route missing targets configuration").into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Load balance route missing targets configuration",
+                )
+                    .into_response();
             }
         };
         let strategy = match args.strategy {
             Some(strategy) => strategy,
             None => {
                 tracing::error!("Load balance route missing strategy configuration");
-                return (StatusCode::INTERNAL_SERVER_ERROR, "Load balance route missing strategy configuration").into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Load balance route missing strategy configuration",
+                )
+                    .into_response();
             }
         };
         let mut req = args.req; // Make req mutable from args
@@ -705,7 +718,7 @@ impl HyperHandler {
                         Self::build_response_with_fallback(
                             status_code,
                             format!("Load balanced request failed: {e}"),
-                            "load balancer error response"
+                            "load balancer error response",
                         )
                     }
                 }
@@ -719,7 +732,7 @@ impl HyperHandler {
                 Self::build_response_with_fallback(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Failed to parse load balanced target URI",
-                    "load balancer URI parsing failure"
+                    "load balancer URI parsing failure",
                 )
             }
         }
@@ -830,10 +843,7 @@ impl HyperHandler {
     }
 
     // Helper function for redirect responses
-    fn build_redirect_response(
-        status: StatusCode,
-        location: String,
-    ) -> AxumResponse {
+    fn build_redirect_response(status: StatusCode, location: String) -> AxumResponse {
         Response::builder()
             .status(status)
             .header("Location", location)
@@ -909,11 +919,19 @@ impl HttpHandler for HyperHandler {
                                 temp_req_builder = temp_req_builder.header(name, value);
                             }
                             // Pass an empty body for the check, actual body is preserved.
-                            let temp_req_for_check = match temp_req_builder.body(AxumBody::empty()) {
+                            let temp_req_for_check = match temp_req_builder.body(AxumBody::empty())
+                            {
                                 Ok(req) => req,
                                 Err(e) => {
-                                    tracing::error!("Failed to build temporary request for rate limiting: {}", e);
-                                    return Ok((StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response());
+                                    tracing::error!(
+                                        "Failed to build temporary request for rate limiting: {}",
+                                        e
+                                    );
+                                    return Ok((
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "Internal server error",
+                                    )
+                                        .into_response());
                                 }
                             };
 
