@@ -33,16 +33,12 @@ impl Http3Handler {
     ) -> Result<()> {
         tracing::debug!("Handling HTTP/3 request on stream {}", stream_id);
 
-        // Convert HTTP/3 headers to HTTP format
         let (_method, uri, _http_headers) = self.convert_h3_headers(headers)?;
 
-        // Create request information for processing
         let request_info = Http3RequestInfo { uri };
 
-        // Process the request using existing proxy logic
         let response = self.process_request(request_info).await?;
 
-        // Convert response back to HTTP/3 format and send
         self.send_h3_response(conn_id, stream_id, response).await?;
 
         Ok(())
@@ -76,7 +72,6 @@ impl Http3Handler {
                     scheme = Some(value.to_string());
                 }
                 _ => {
-                    // Regular header
                     let header_name =
                         HeaderName::from_bytes(name.as_bytes()).context("Invalid header name")?;
                     let header_value =
@@ -89,7 +84,6 @@ impl Http3Handler {
         let method = method.ok_or_else(|| anyhow::anyhow!("Missing :method header"))?;
         let mut uri = uri.ok_or_else(|| anyhow::anyhow!("Missing :path header"))?;
 
-        // Reconstruct full URI if authority and scheme are present
         if let (Some(auth), Some(sch)) = (authority, scheme) {
             let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
             let full_uri = format!("{sch}://{auth}{path_and_query}");
@@ -121,23 +115,17 @@ impl Http3Handler {
             }
         };
 
-        // Create a basic HTTP request structure for processing
-        // Note: This is simplified - you'd need proper HTTP request construction
         let path = request_info.uri.path();
 
-        // Check if this matches any configured routes
         let route_config = proxy_service.find_matching_route(path);
 
         if route_config.is_some() {
-            // Process through proxy service
-            // This would require adapting the existing handler logic
             Ok(Http3Response {
                 status: StatusCode::OK,
                 headers: HeaderMap::new(),
                 body: Some(Bytes::from("HTTP/3 response from proxy")),
             })
         } else {
-            // Not found
             Ok(Http3Response {
                 status: StatusCode::NOT_FOUND,
                 headers: HeaderMap::new(),

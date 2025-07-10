@@ -16,23 +16,17 @@ use governor::{Quota, RateLimiter};
 
 use crate::config::models::{MissingKeyPolicy, RateLimitAlgorithm, RateLimitBy, RateLimitConfig};
 
-// --- LimiterWrapper Definition ---
-// LimiterWrapper holds a RateLimiter instance and the response details for when the limit is exceeded.
-// RL is the specific type of governor::RateLimiter.
 #[derive(Clone)]
 pub struct LimiterWrapper<RL> {
     pub limiter: RL,
     pub status_code: StatusCode,
     pub message: String,
-    pub on_missing_key: MissingKeyPolicy, // Added field
+    pub on_missing_key: MissingKeyPolicy,
 }
 
-// --- Type Aliases for specific RateLimiter configurations ---
 pub type DirectRateLimiterImpl = RateLimiter<NotKeyed, InMemoryState, DefaultClock>;
 pub type KeyedRateLimiterImpl<K> = RateLimiter<K, DashMapStateStore<K>, DefaultClock>;
 
-// --- Type Aliases for specific LimiterWrappers ---
-// These wrap the RateLimiter implementations with custom error responses.
 pub type RouteSpecificLimiter = LimiterWrapper<DirectRateLimiterImpl>;
 pub type IpLimiter = LimiterWrapper<KeyedRateLimiterImpl<IpAddr>>;
 pub type HeaderLimiter = LimiterWrapper<KeyedRateLimiterImpl<String>>;

@@ -20,39 +20,31 @@ impl QuicheConfig {
         let mut config =
             Config::new(quiche::PROTOCOL_VERSION).context("Failed to create QUIC config")?;
 
-        // Set application protocols - HTTP/3 uses "h3"
         config
             .set_application_protos(&[b"h3"])
             .context("Failed to set application protocols")?;
 
-        // Configure flow control
         config.set_initial_max_data(http3_config.max_data);
         config.set_initial_max_stream_data_bidi_local(http3_config.max_stream_data);
         config.set_initial_max_stream_data_bidi_remote(http3_config.max_stream_data);
         config.set_initial_max_streams_bidi(http3_config.max_streams_bidi);
 
-        // Configure congestion control
         let cc_algorithm = match http3_config.congestion_control {
             Http3CongestionControl::Cubic => CongestionControlAlgorithm::CUBIC,
             Http3CongestionControl::Reno => CongestionControlAlgorithm::Reno,
             Http3CongestionControl::Bbr => CongestionControlAlgorithm::BBR,
         };
         config.set_cc_algorithm(cc_algorithm);
-
-        // Set idle timeout
         config.set_max_idle_timeout(http3_config.max_idle_timeout);
 
-        // Enable 0-RTT if configured
         if http3_config.enable_0rtt {
             config.enable_early_data();
         }
 
-        // Set maximum packet size if specified
         if let Some(max_packet_size) = http3_config.max_packet_size {
             config.set_max_recv_udp_payload_size(max_packet_size as usize);
         }
 
-        // Load TLS certificate and private key
         config
             .load_cert_chain_from_pem_file(cert_path)
             .with_context(|| format!("Failed to load certificate from {cert_path}"))?;
@@ -61,7 +53,6 @@ impl QuicheConfig {
             .load_priv_key_from_pem_file(key_path)
             .with_context(|| format!("Failed to load private key from {key_path}"))?;
 
-        // Enable qlog for debugging (optional)
         config.enable_dgram(true, 1024, 1024);
 
         Ok(Self { config })
@@ -93,14 +84,12 @@ mod tests {
     fn test_quiche_config_creation_fails_with_invalid_certs() {
         let http3_config = create_test_http3_config();
 
-        // Test with invalid certificate paths
         let result = QuicheConfig::new(
             &http3_config,
             "invalid/cert/path.pem",
             "invalid/key/path.pem",
         );
 
-        // Should fail due to missing certificate files
         assert!(result.is_err());
 
         let error_msg = result.unwrap_err().to_string();
@@ -116,17 +105,15 @@ mod tests {
             ..create_test_http3_config()
         };
 
-        // Test that we can create a QUIC config (will fail on cert loading but that's expected)
         let result = QuicheConfig::new(&http3_config, "cert.pem", "key.pem");
-        assert!(result.is_err()); // Expected due to missing certs
+        assert!(result.is_err());
 
-        // Test other congestion control algorithms
         let reno_config = Http3Config {
             congestion_control: Http3CongestionControl::Reno,
             ..create_test_http3_config()
         };
         let reno_result = QuicheConfig::new(&reno_config, "cert.pem", "key.pem");
-        assert!(reno_result.is_err()); // Expected due to missing certs
+        assert!(reno_result.is_err());
 
         let bbr_config = Http3Config {
             congestion_control: Http3CongestionControl::Bbr,

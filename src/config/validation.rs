@@ -55,12 +55,10 @@ impl ConfigValidator {
     pub fn validate(config: &ServerConfig) -> ValidationResult<()> {
         let mut errors = Vec::new();
 
-        // Validate listen address
         if let Err(e) = Self::validate_listen_address(&config.listen_addr) {
             errors.push(e);
         }
 
-        // Validate routes
         if config.routes.is_empty() {
             errors.push(ValidationError::MissingField {
                 field: "routes".to_string(),
@@ -73,14 +71,12 @@ impl ConfigValidator {
             }
         }
 
-        // Validate TLS configuration if present
         if let Some(tls_config) = &config.tls {
             if let Err(e) = Self::validate_tls_config(tls_config) {
                 errors.push(e);
             }
         }
 
-        // Check for route conflicts
         if let Err(conflict_error_list) = Self::check_route_conflicts(&config.routes) {
             errors.extend(conflict_error_list);
         }
@@ -111,7 +107,6 @@ impl ConfigValidator {
     fn validate_single_route(path: &str, config: &RouteConfig) -> Result<(), Vec<ValidationError>> {
         let mut errors = Vec::new();
 
-        // Validate path format
         if !path.starts_with('/') {
             errors.push(ValidationError::InvalidField {
                 field: format!("route path: {path}"),
@@ -153,7 +148,6 @@ impl ConfigValidator {
                 status_code,
                 ..
             } => {
-                // Validate redirect target (can be relative or absolute URL)
                 if target.starts_with("http://") || target.starts_with("https://") {
                     if let Err(e) =
                         Self::validate_url(target, &format!("route '{path}' redirect target"))
@@ -162,7 +156,6 @@ impl ConfigValidator {
                     }
                 }
 
-                // Validate status code
                 if let Some(code) = status_code {
                     if !Self::is_valid_redirect_status_code(*code) {
                         errors.push(ValidationError::InvalidField {
@@ -170,9 +163,6 @@ impl ConfigValidator {
                             message: format!("Status code {code} is not a valid redirect code. Use 301, 302, 307, or 308"),
                         });
                     }
-                } else {
-                    // Default status code should be valid
-                    // This is OK, we'll use a default 302 in the actual implementation
                 }
             }
             RouteConfig::Websocket {
@@ -181,7 +171,6 @@ impl ConfigValidator {
                 max_message_size,
                 ..
             } => {
-                // Validate WebSocket target URL
                 if let Err(e) = Self::validate_websocket_url(
                     target,
                     &format!("route '{path}' websocket target"),
@@ -189,7 +178,6 @@ impl ConfigValidator {
                     errors.push(e);
                 }
 
-                // Validate frame size limits
                 if let Some(frame_size) = max_frame_size {
                     if *frame_size == 0 {
                         errors.push(ValidationError::InvalidField {
@@ -199,7 +187,6 @@ impl ConfigValidator {
                     }
                 }
 
-                // Validate message size limits
                 if let Some(message_size) = max_message_size {
                     if *message_size == 0 {
                         errors.push(ValidationError::InvalidField {
@@ -212,7 +199,6 @@ impl ConfigValidator {
             }
         }
 
-        // Validate rate limiting if configured
         let rate_limit = match config {
             RouteConfig::Proxy { rate_limit, .. } => rate_limit,
             RouteConfig::LoadBalance { rate_limit, .. } => rate_limit,
@@ -227,7 +213,6 @@ impl ConfigValidator {
             }
         }
 
-        // Validate path rewrite regex if present
         let path_rewrite = match config {
             RouteConfig::Proxy { path_rewrite, .. } => path_rewrite,
             RouteConfig::LoadBalance { path_rewrite, .. } => path_rewrite,
@@ -312,7 +297,6 @@ impl ConfigValidator {
 
     /// Validate rate limit configuration
     fn validate_rate_limit(route_path: &str, config: &RateLimitConfig) -> ValidationResult<()> {
-        // Validate period format
         if let Err(e) = Self::parse_period(&config.period) {
             return Err(ValidationError::InvalidRateLimit {
                 route: route_path.to_string(),
@@ -323,7 +307,6 @@ impl ConfigValidator {
             });
         }
 
-        // Validate requests count
         if config.requests == 0 {
             return Err(ValidationError::InvalidRateLimit {
                 route: route_path.to_string(),
@@ -331,7 +314,6 @@ impl ConfigValidator {
             });
         }
 
-        // Validate status code
         if config.status_code < 400 || config.status_code > 599 {
             return Err(ValidationError::InvalidRateLimit {
                 route: route_path.to_string(),
@@ -342,7 +324,6 @@ impl ConfigValidator {
             });
         }
 
-        // Validate header name if rate limiting by header
         if let crate::config::models::RateLimitBy::Header = config.by {
             if let Some(header_name) = &config.header_name {
                 if header_name.is_empty() {
@@ -353,7 +334,6 @@ impl ConfigValidator {
                     });
                 }
 
-                // Validate header name format
                 if header_name.parse::<hyper::header::HeaderName>().is_err() {
                     return Err(ValidationError::InvalidRateLimit {
                         route: route_path.to_string(),
@@ -377,7 +357,6 @@ impl ConfigValidator {
     fn validate_tls_config(config: &TlsConfig) -> ValidationResult<()> {
         match (&config.cert_path, &config.key_path, &config.acme) {
             (Some(cert_path), Some(key_path), None) => {
-                // Manual certificate configuration
                 if !Path::new(cert_path).exists() {
                     return Err(ValidationError::InvalidTls {
                         message: format!("Certificate file not found: {cert_path}"),
@@ -391,7 +370,6 @@ impl ConfigValidator {
                 }
             }
             (None, None, Some(acme_config)) => {
-                // ACME configuration
                 Self::validate_acme_config(acme_config)?;
             }
             (Some(_), Some(_), Some(_)) => {
@@ -421,14 +399,12 @@ impl ConfigValidator {
             });
         }
 
-        // Validate email format
         if !Self::is_valid_email(&config.email) {
             return Err(ValidationError::InvalidAcme {
                 message: format!("Invalid email address: {email}", email = config.email),
             });
         }
 
-        // Validate domains
         for domain in &config.domains {
             if !Self::is_valid_domain(domain) {
                 return Err(ValidationError::InvalidAcme {
@@ -437,7 +413,6 @@ impl ConfigValidator {
             }
         }
 
-        // Validate renewal days
         if let Some(days) = config.renewal_days_before_expiry {
             if days == 0 || days > 89 {
                 return Err(ValidationError::InvalidAcme {
@@ -505,7 +480,6 @@ impl ConfigValidator {
         }
 
         // Check if one is a prefix of the other with a path separator
-        // e.g., "/api" conflicts with "/api/v1" but not with "/apiv2"
         let longer = if path1_norm.len() > path2_norm.len() {
             path1_norm
         } else {
@@ -523,7 +497,6 @@ impl ConfigValidator {
 
     /// Validate path rewrite pattern
     fn validate_path_rewrite(route_path: &str, path_rewrite: &str) -> ValidationResult<()> {
-        // For now, we'll do basic validation. In the future, we could validate regex patterns
         if path_rewrite.is_empty() {
             return Err(ValidationError::InvalidField {
                 field: format!("route '{route_path}' path_rewrite"),
@@ -531,7 +504,6 @@ impl ConfigValidator {
             });
         }
 
-        // Validate that it starts with /
         if !path_rewrite.starts_with('/') {
             return Err(ValidationError::InvalidField {
                 field: format!("route '{route_path}' path_rewrite"),

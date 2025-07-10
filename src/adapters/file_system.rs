@@ -60,6 +60,5 @@ mod tests {
     fn test_default_construction() {
         let _fs1 = TowerFileSystem::new();
         let _fs2 = TowerFileSystem {};
-        // Both instantiation methods are valid and equivalent
     }
 }

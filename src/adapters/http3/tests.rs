@@ -42,7 +42,6 @@ mod http3_tests {
 
     #[test]
     fn test_http3_config_validation_ranges() {
-        // Test minimum values
         let min_config = Http3Config {
             max_data: 1024,
             max_stream_data: 1024,
@@ -58,7 +57,6 @@ mod http3_tests {
         assert!(min_config.max_streams_bidi >= 1);
         assert!(min_config.max_idle_timeout >= 1000);
 
-        // Test maximum reasonable values
         let max_config = Http3Config {
             max_data: 1_000_000_000,
             max_stream_data: 100_000_000,
@@ -77,7 +75,6 @@ mod http3_tests {
 
     #[test]
     fn test_bytes_creation() {
-        // Test Bytes creation for HTTP/3 request bodies
         let empty_body: Option<Bytes> = None;
         let some_body = Bytes::from("test body");
 
@@ -87,7 +84,6 @@ mod http3_tests {
 
     #[test]
     fn test_socket_addr_parsing() {
-        // Test socket address parsing for HTTP/3 server binding
         let addr: SocketAddr = "127.0.0.1:3000".parse().expect("Failed to parse address");
 
         assert_eq!(addr.ip().to_string(), "127.0.0.1");
@@ -96,20 +92,13 @@ mod http3_tests {
 
     #[test]
     fn test_h3_header_conversion() {
-        // Test HTTP/3 header name-value pairs
         let method_header = H3Header::new(b":method", b"GET");
         let path_header = H3Header::new(b":path", b"/test");
         let authority_header = H3Header::new(b":authority", b"example.com");
 
-        // Verify headers are created successfully
-        // Note: H3Header::new returns a Header directly, not a Result
-        // We can test by creating them without panicking
         drop(method_header);
         drop(path_header);
         drop(authority_header);
-
-        // Test successful creation
-        // Headers were created without panicking - test passes
     }
 
     #[test]
@@ -141,7 +130,6 @@ mod http3_tests {
 
     #[test]
     fn test_config_optional_fields() {
-        // Test config with None max_packet_size
         let config_without_max_packet = Http3Config {
             max_data: 10_000_000,
             max_stream_data: 1_000_000,
@@ -155,7 +143,6 @@ mod http3_tests {
         assert!(config_without_max_packet.max_packet_size.is_none());
         assert!(!config_without_max_packet.enable_0rtt);
 
-        // Test config with Some max_packet_size
         let config_with_max_packet = Http3Config {
             max_data: 10_000_000,
             max_stream_data: 1_000_000,
