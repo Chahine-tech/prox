@@ -63,7 +63,7 @@ rcgen = "0.13"
 prometheus = { version = "0.14.0", features = ["process"] }
 
 # HTTP/3 support
-quiche = { version = "0.24.4", features = ["boringssl-vendored", "ffi", "qlog"] }
+quiche = { version = "0.24.5", features = ["boringssl-vendored", "ffi", "qlog"] }
 
 [dev-dependencies]
 tempfile = "3.13"
