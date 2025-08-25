@@ -149,7 +149,9 @@ impl ConfigValidator {
                 ..
             } => {
                 if target.starts_with("http://") || target.starts_with("https://") {
-                    if let Err(e) = Self::validate_url(target, &format!("route '{path}' redirect target")) {
+                    if let Err(e) =
+                        Self::validate_url(target, &format!("route '{path}' redirect target"))
+                    {
                         errors.push(e);
                     }
                 }
@@ -178,19 +180,23 @@ impl ConfigValidator {
                 }
 
                 match max_frame_size {
-                    Some(frame_size) if *frame_size == 0 => errors.push(ValidationError::InvalidField {
-                        field: format!("route '{path}' max_frame_size"),
-                        message: "WebSocket max frame size must be greater than 0".to_string(),
-                    }),
+                    Some(frame_size) if *frame_size == 0 => {
+                        errors.push(ValidationError::InvalidField {
+                            field: format!("route '{path}' max_frame_size"),
+                            message: "WebSocket max frame size must be greater than 0".to_string(),
+                        })
+                    }
                     _ => {}
                 }
 
                 match max_message_size {
-                    Some(message_size) if *message_size == 0 => errors.push(ValidationError::InvalidField {
-                        field: format!("route '{path}' max_message_size"),
-                        message: "WebSocket max message size must be greater than 0"
-                            .to_string(),
-                    }),
+                    Some(message_size) if *message_size == 0 => {
+                        errors.push(ValidationError::InvalidField {
+                            field: format!("route '{path}' max_message_size"),
+                            message: "WebSocket max message size must be greater than 0"
+                                .to_string(),
+                        })
+                    }
                     _ => {}
                 }
             }
