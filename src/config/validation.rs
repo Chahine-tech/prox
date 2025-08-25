@@ -72,7 +72,11 @@ impl ConfigValidator {
         }
 
         // Validate TLS configuration if present
-        Self::collect_tls_validation_errors(&config.tls, &mut errors);
+        if let Some(tls_config) = &config.tls {
+            if let Err(e) = Self::validate_tls_config(tls_config) {
+                errors.push(e);
+            }
+        }
 
         if let Err(conflict_error_list) = Self::check_route_conflicts(&config.routes) {
             errors.extend(conflict_error_list);
@@ -146,7 +150,11 @@ impl ConfigValidator {
                 ..
             } => {
                 // Validate redirect target URL format
-                Self::collect_redirect_url_validation_errors(path, target, &mut errors);
+                if target.starts_with("http://") || target.starts_with("https://") {
+                    if let Err(e) = Self::validate_url(target, &format!("route '{path}' redirect target")) {
+                        errors.push(e);
+                    }
+                }
 
                 // Validate redirect status code
                 match status_code {
@@ -199,7 +207,11 @@ impl ConfigValidator {
         };
 
         // Validate rate limiting configuration if present
-        Self::collect_rate_limit_validation_errors(path, rate_limit.as_ref(), &mut errors);
+        if let Some(rate_limit) = rate_limit {
+            if let Err(e) = Self::validate_rate_limit(path, rate_limit) {
+                errors.push(e);
+            }
+        }
 
         let path_rewrite = match config {
             RouteConfig::Proxy { path_rewrite, .. } => path_rewrite,
@@ -210,7 +222,11 @@ impl ConfigValidator {
         };
 
         // Validate path rewrite configuration if present
-        Self::collect_path_rewrite_validation_errors(path, path_rewrite.as_ref(), &mut errors);
+        if let Some(path_rewrite) = path_rewrite {
+            if let Err(e) = Self::validate_path_rewrite(path, path_rewrite) {
+                errors.push(e);
+            }
+        }
 
         if errors.is_empty() {
             Ok(())
@@ -566,61 +582,6 @@ impl ConfigValidator {
             message.push_str(&format!("  {}. {error}\n", i + 1));
         }
         message
-    }
-
-    /// Helper method to collect TLS validation errors
-    #[allow(clippy::collapsible_if)]
-    fn collect_tls_validation_errors(
-        tls_config: &Option<TlsConfig>,
-        errors: &mut Vec<ValidationError>,
-    ) {
-        if let Some(config) = tls_config {
-            if let Err(e) = Self::validate_tls_config(config) {
-                errors.push(e);
-            }
-        }
-    }
-
-    /// Helper method to collect rate limit validation errors
-    #[allow(clippy::collapsible_if)]
-    fn collect_rate_limit_validation_errors(
-        path: &str,
-        rate_limit: Option<&RateLimitConfig>,
-        errors: &mut Vec<ValidationError>,
-    ) {
-        if let Some(rate_limit) = rate_limit {
-            if let Err(e) = Self::validate_rate_limit(path, rate_limit) {
-                errors.push(e);
-            }
-        }
-    }
-
-    /// Helper method to collect path rewrite validation errors
-    #[allow(clippy::collapsible_if)]
-    fn collect_path_rewrite_validation_errors(
-        path: &str,
-        path_rewrite: Option<&String>,
-        errors: &mut Vec<ValidationError>,
-    ) {
-        if let Some(path_rewrite) = path_rewrite {
-            if let Err(e) = Self::validate_path_rewrite(path, path_rewrite) {
-                errors.push(e);
-            }
-        }
-    }
-
-    /// Helper method to collect redirect URL validation errors
-    #[allow(clippy::collapsible_if)]
-    fn collect_redirect_url_validation_errors(
-        path: &str,
-        target: &str,
-        errors: &mut Vec<ValidationError>,
-    ) {
-        if target.starts_with("http://") || target.starts_with("https://") {
-            if let Err(e) = Self::validate_url(target, &format!("route '{path}' redirect target")) {
-                errors.push(e);
-            }
-        }
     }
 }
 
