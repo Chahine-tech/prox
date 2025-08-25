@@ -569,18 +569,20 @@ impl ConfigValidator {
     }
 
     /// Helper method to collect TLS validation errors
+    #[allow(clippy::collapsible_if)]
     fn collect_tls_validation_errors(
         tls_config: &Option<TlsConfig>,
         errors: &mut Vec<ValidationError>,
     ) {
-        if let Some(tls_config) = tls_config {
-            if let Err(e) = Self::validate_tls_config(tls_config) {
+        if let Some(config) = tls_config {
+            if let Err(e) = Self::validate_tls_config(config) {
                 errors.push(e);
             }
         }
     }
 
     /// Helper method to collect rate limit validation errors
+    #[allow(clippy::collapsible_if)]
     fn collect_rate_limit_validation_errors(
         path: &str,
         rate_limit: Option<&RateLimitConfig>,
@@ -594,6 +596,7 @@ impl ConfigValidator {
     }
 
     /// Helper method to collect path rewrite validation errors
+    #[allow(clippy::collapsible_if)]
     fn collect_path_rewrite_validation_errors(
         path: &str,
         path_rewrite: Option<&String>,
@@ -607,6 +610,7 @@ impl ConfigValidator {
     }
 
     /// Helper method to collect redirect URL validation errors
+    #[allow(clippy::collapsible_if)]
     fn collect_redirect_url_validation_errors(
         path: &str,
         target: &str,
