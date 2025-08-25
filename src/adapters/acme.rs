@@ -464,10 +464,9 @@ impl AcmeService {
     /// Check if any of the configured domains has an expired certificate
     pub fn has_expired_certificate(&self) -> bool {
         for domain in &self.config.domains {
-            if let Some(cert_info) = self.check_certificate(domain) {
-                if cert_info.is_expired() {
-                    return true;
-                }
+            match self.check_certificate(domain) {
+                Some(cert_info) if cert_info.is_expired() => return true,
+                _ => {}
             }
         }
         false

@@ -149,20 +149,19 @@ impl ConfigValidator {
                 ..
             } => {
                 if target.starts_with("http://") || target.starts_with("https://") {
-                    if let Err(e) =
-                        Self::validate_url(target, &format!("route '{path}' redirect target"))
-                    {
+                    if let Err(e) = Self::validate_url(target, &format!("route '{path}' redirect target")) {
                         errors.push(e);
                     }
                 }
 
-                if let Some(code) = status_code {
-                    if !Self::is_valid_redirect_status_code(*code) {
+                match status_code {
+                    Some(code) if !Self::is_valid_redirect_status_code(*code) => {
                         errors.push(ValidationError::InvalidField {
                             field: format!("route '{path}' redirect status_code"),
                             message: format!("Status code {code} is not a valid redirect code. Use 301, 302, 307, or 308"),
                         });
                     }
+                    _ => {}
                 }
             }
             RouteConfig::Websocket {
@@ -178,23 +177,21 @@ impl ConfigValidator {
                     errors.push(e);
                 }
 
-                if let Some(frame_size) = max_frame_size {
-                    if *frame_size == 0 {
-                        errors.push(ValidationError::InvalidField {
-                            field: format!("route '{path}' max_frame_size"),
-                            message: "WebSocket max frame size must be greater than 0".to_string(),
-                        });
-                    }
+                match max_frame_size {
+                    Some(frame_size) if *frame_size == 0 => errors.push(ValidationError::InvalidField {
+                        field: format!("route '{path}' max_frame_size"),
+                        message: "WebSocket max frame size must be greater than 0".to_string(),
+                    }),
+                    _ => {}
                 }
 
-                if let Some(message_size) = max_message_size {
-                    if *message_size == 0 {
-                        errors.push(ValidationError::InvalidField {
-                            field: format!("route '{path}' max_message_size"),
-                            message: "WebSocket max message size must be greater than 0"
-                                .to_string(),
-                        });
-                    }
+                match max_message_size {
+                    Some(message_size) if *message_size == 0 => errors.push(ValidationError::InvalidField {
+                        field: format!("route '{path}' max_message_size"),
+                        message: "WebSocket max message size must be greater than 0"
+                            .to_string(),
+                    }),
+                    _ => {}
                 }
             }
         }

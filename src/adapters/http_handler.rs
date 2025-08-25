@@ -255,15 +255,18 @@ impl HyperHandler {
     ) {
         if let Some(actions_config) = actions_config_opt {
             if let Some(condition) = &actions_config.condition {
-                if let Some(ctx) = condition_check_ctx {
-                    if !Self::check_condition(ctx, condition) {
-                        return; // Condition not met, skip actions
+                match condition_check_ctx {
+                    Some(ctx) => {
+                        if !Self::check_condition(ctx, condition) {
+                            return; // Condition not met, skip actions
+                        }
                     }
-                } else {
-                    tracing::warn!(
-                        "Condition specified for header actions, but no context provided for check. Skipping actions."
-                    );
-                    return;
+                    None => {
+                        tracing::warn!(
+                            "Condition specified for header actions, but no context provided for check. Skipping actions."
+                        );
+                        return;
+                    }
                 }
             }
 
@@ -361,21 +364,20 @@ impl HyperHandler {
             None => return Ok(response_to_modify),
         };
 
-        if let Some(condition) = &actions_config.condition {
-            match initial_req_ctx_opt {
-                Some(ctx) => {
-                    if !Self::check_condition(ctx, condition) {
+            if let Some(condition) = &actions_config.condition {
+                match initial_req_ctx_opt {
+                    Some(ctx) if !Self::check_condition(ctx, condition) => {
+                        return Ok(response_to_modify);
+                    }
+                    Some(_) => {}
+                    None => {
+                        tracing::warn!(
+                            "Condition specified for response body actions, but no context provided for check. Skipping actions."
+                        );
                         return Ok(response_to_modify);
                     }
                 }
-                None => {
-                    tracing::warn!(
-                        "Condition specified for response body actions, but no context provided for check. Skipping actions."
-                    );
-                    return Ok(response_to_modify);
-                }
             }
-        }
 
         if actions_config.set_text.is_none() && actions_config.set_json.is_none() {
             return Ok(response_to_modify);
