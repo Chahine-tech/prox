@@ -181,6 +181,7 @@ impl HyperHandler {
         Self::build_redirect_response(status, redirect_url)
     }
 
+    #[allow(clippy::collapsible_if)]
     fn check_condition(ctx: &RequestConditionContext, condition_config: &RequestCondition) -> bool {
         if let Some(path_regex_str) = &condition_config.path_matches {
             if let Ok(regex) = Regex::new(path_regex_str) {
@@ -292,6 +293,7 @@ impl HyperHandler {
         }
     }
 
+    #[allow(clippy::collapsible_if)]
     async fn apply_body_actions_to_request(
         req: &mut Request<AxumBody>,
         actions_config_opt: Option<&BodyActions>,

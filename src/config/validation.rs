@@ -52,6 +52,7 @@ pub struct ConfigValidator;
 
 impl ConfigValidator {
     /// Validate a complete server configuration
+    #[allow(clippy::collapsible_if)]
     pub fn validate(config: &ServerConfig) -> ValidationResult<()> {
         let mut errors = Vec::new();
 
@@ -104,6 +105,7 @@ impl ConfigValidator {
 
     /// Validate all route configurations
     /// Validate a single route configuration
+    #[allow(clippy::collapsible_if)]
     fn validate_single_route(path: &str, config: &RouteConfig) -> Result<(), Vec<ValidationError>> {
         let mut errors = Vec::new();
 
@@ -391,6 +393,7 @@ impl ConfigValidator {
     }
 
     /// Validate ACME configuration
+    #[allow(clippy::collapsible_if)]
     fn validate_acme_config(config: &AcmeConfig) -> ValidationResult<()> {
         if !config.enabled {
             return Ok(()); // Skip validation if ACME is disabled
