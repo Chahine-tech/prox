@@ -1915,9 +1915,9 @@ dependencies = [
 
 [[package]]
 name = "quiche"
-version = "0.24.4"
+version = "0.24.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1074d39fd8de884478ab94220330f3127c7308475d537a42719914e9ae870cd5"
+checksum = "88fa45f0d2e3fc7ca8b4306408f8b15df9a3b5ac70197f84dfc6ebf58fb7e26a"
 dependencies = [
  "cdylib-link-lines",
  "cmake",
