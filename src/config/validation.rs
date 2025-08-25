@@ -151,7 +151,9 @@ impl ConfigValidator {
             } => {
                 // Validate redirect target URL format
                 if target.starts_with("http://") || target.starts_with("https://") {
-                    if let Err(e) = Self::validate_url(target, &format!("route '{path}' redirect target")) {
+                    if let Err(e) =
+                        Self::validate_url(target, &format!("route '{path}' redirect target"))
+                    {
                         errors.push(e);
                     }
                 }
