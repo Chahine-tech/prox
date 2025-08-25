@@ -298,7 +298,8 @@ impl HyperHandler {
             let ctx = RequestConditionContext::from_request(req);
 
             // Check condition before applying actions
-            if matches!(actions_config.condition.as_ref(), Some(condition) if !Self::check_condition(&ctx, condition)) {
+            if matches!(actions_config.condition.as_ref(), Some(condition) if !Self::check_condition(&ctx, condition))
+            {
                 return Ok(());
             }
 

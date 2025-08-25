@@ -151,7 +151,9 @@ impl ConfigValidator {
             } => {
                 // Validate redirect target URL format
                 if target.starts_with("http://") || target.starts_with("https://") {
-                    if let Err(e) = Self::validate_url(target, &format!("route '{path}' redirect target")) {
+                    if let Err(e) =
+                        Self::validate_url(target, &format!("route '{path}' redirect target"))
+                    {
                         errors.push(e);
                     }
                 }
@@ -191,8 +193,7 @@ impl ConfigValidator {
                 if matches!(max_message_size, Some(0)) {
                     errors.push(ValidationError::InvalidField {
                         field: format!("route '{path}' max_message_size"),
-                        message: "WebSocket max message size must be greater than 0"
-                            .to_string(),
+                        message: "WebSocket max message size must be greater than 0".to_string(),
                     });
                 }
             }
