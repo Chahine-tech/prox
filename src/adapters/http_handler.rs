@@ -297,10 +297,9 @@ impl HyperHandler {
         if let Some(actions_config) = actions_config_opt {
             let ctx = RequestConditionContext::from_request(req);
 
-            if let Some(condition) = &actions_config.condition {
-                if !Self::check_condition(&ctx, condition) {
-                    return Ok(());
-                }
+            // Check condition before applying actions
+            if matches!(actions_config.condition.as_ref(), Some(condition) if !Self::check_condition(&ctx, condition)) {
+                return Ok(());
             }
 
             let client_ip_str = client_ip.map(|ip| ip.ip().to_string()).unwrap_or_default();

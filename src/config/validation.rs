@@ -71,6 +71,7 @@ impl ConfigValidator {
             }
         }
 
+        // Validate TLS configuration if present
         if let Some(tls_config) = &config.tls {
             if let Err(e) = Self::validate_tls_config(tls_config) {
                 errors.push(e);
@@ -148,14 +149,14 @@ impl ConfigValidator {
                 status_code,
                 ..
             } => {
+                // Validate redirect target URL format
                 if target.starts_with("http://") || target.starts_with("https://") {
-                    if let Err(e) =
-                        Self::validate_url(target, &format!("route '{path}' redirect target"))
-                    {
+                    if let Err(e) = Self::validate_url(target, &format!("route '{path}' redirect target")) {
                         errors.push(e);
                     }
                 }
 
+                // Validate redirect status code
                 if let Some(code) = status_code {
                     if !Self::is_valid_redirect_status_code(*code) {
                         errors.push(ValidationError::InvalidField {
@@ -178,23 +179,21 @@ impl ConfigValidator {
                     errors.push(e);
                 }
 
-                if let Some(frame_size) = max_frame_size {
-                    if *frame_size == 0 {
-                        errors.push(ValidationError::InvalidField {
-                            field: format!("route '{path}' max_frame_size"),
-                            message: "WebSocket max frame size must be greater than 0".to_string(),
-                        });
-                    }
+                // Validate frame size
+                if matches!(max_frame_size, Some(0)) {
+                    errors.push(ValidationError::InvalidField {
+                        field: format!("route '{path}' max_frame_size"),
+                        message: "WebSocket max frame size must be greater than 0".to_string(),
+                    });
                 }
 
-                if let Some(message_size) = max_message_size {
-                    if *message_size == 0 {
-                        errors.push(ValidationError::InvalidField {
-                            field: format!("route '{path}' max_message_size"),
-                            message: "WebSocket max message size must be greater than 0"
-                                .to_string(),
-                        });
-                    }
+                // Validate message size
+                if matches!(max_message_size, Some(0)) {
+                    errors.push(ValidationError::InvalidField {
+                        field: format!("route '{path}' max_message_size"),
+                        message: "WebSocket max message size must be greater than 0"
+                            .to_string(),
+                    });
                 }
             }
         }
@@ -207,6 +206,7 @@ impl ConfigValidator {
             RouteConfig::Websocket { rate_limit, .. } => rate_limit,
         };
 
+        // Validate rate limiting configuration if present
         if let Some(rate_limit) = rate_limit {
             if let Err(e) = Self::validate_rate_limit(path, rate_limit) {
                 errors.push(e);
@@ -221,6 +221,7 @@ impl ConfigValidator {
             RouteConfig::Websocket { path_rewrite, .. } => path_rewrite,
         };
 
+        // Validate path rewrite configuration if present
         if let Some(path_rewrite) = path_rewrite {
             if let Err(e) = Self::validate_path_rewrite(path, path_rewrite) {
                 errors.push(e);
@@ -413,14 +414,14 @@ impl ConfigValidator {
             }
         }
 
-        if let Some(days) = config.renewal_days_before_expiry {
-            if days == 0 || days > 89 {
-                return Err(ValidationError::InvalidAcme {
-                    message: format!(
-                        "renewal_days_before_expiry must be between 1 and 89, got: {days}"
-                    ),
-                });
-            }
+        // Validate renewal days before expiry
+        if matches!(config.renewal_days_before_expiry, Some(days) if days == 0 || days > 89) {
+            let days = config.renewal_days_before_expiry.unwrap();
+            return Err(ValidationError::InvalidAcme {
+                message: format!(
+                    "renewal_days_before_expiry must be between 1 and 89, got: {days}"
+                ),
+            });
         }
 
         Ok(())
