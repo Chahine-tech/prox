@@ -198,8 +198,9 @@ impl HyperHandler {
             }
         }
 
-        if let Some(method_str) = &condition_config.method_is {
-            if ctx.method.as_str() != method_str.to_uppercase() {
+        // Check method condition
+        match &condition_config.method_is {
+            Some(method_str) if ctx.method.as_str() != method_str.to_uppercase() => {
                 tracing::debug!(
                     "Condition failed: method '{}' does not match '{}'",
                     ctx.method,
@@ -207,6 +208,7 @@ impl HyperHandler {
                 );
                 return false;
             }
+            _ => {}
         }
 
         if let Some(header_cond) = &condition_config.has_header {
