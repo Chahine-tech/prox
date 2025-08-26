@@ -198,8 +198,9 @@ impl HyperHandler {
             }
         }
 
-        if let Some(method_str) = &condition_config.method_is {
-            if ctx.method.as_str() != method_str.to_uppercase() {
+        // Check method condition
+        match &condition_config.method_is {
+            Some(method_str) if ctx.method.as_str() != method_str.to_uppercase() => {
                 tracing::debug!(
                     "Condition failed: method '{}' does not match '{}'",
                     ctx.method,
@@ -207,6 +208,7 @@ impl HyperHandler {
                 );
                 return false;
             }
+            _ => {}
         }
 
         if let Some(header_cond) = &condition_config.has_header {
@@ -297,10 +299,10 @@ impl HyperHandler {
         if let Some(actions_config) = actions_config_opt {
             let ctx = RequestConditionContext::from_request(req);
 
-            if let Some(condition) = &actions_config.condition {
-                if !Self::check_condition(&ctx, condition) {
-                    return Ok(());
-                }
+            // Check condition before applying actions
+            if matches!(actions_config.condition.as_ref(), Some(condition) if !Self::check_condition(&ctx, condition))
+            {
+                return Ok(());
             }
 
             let client_ip_str = client_ip.map(|ip| ip.ip().to_string()).unwrap_or_default();
