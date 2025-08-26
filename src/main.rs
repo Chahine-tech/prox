@@ -370,11 +370,10 @@ async fn main() -> Result<()> {
             protocols.websocket_enabled
         );
 
-        if protocols.http3_enabled {
-            if let Some(h3_addr) = server.http3_local_addr() {
-                tracing::info!("HTTP/3 server listening on UDP {h3_addr}");
-                println!("HTTP/3 server listening on UDP {h3_addr}");
-            }
+        // Log HTTP/3 server address if enabled and available
+        if let (true, Some(h3_addr)) = (protocols.http3_enabled, server.http3_local_addr()) {
+            tracing::info!("HTTP/3 server listening on UDP {h3_addr}");
+            println!("HTTP/3 server listening on UDP {h3_addr}");
         }
     }
 
