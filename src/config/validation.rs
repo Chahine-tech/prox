@@ -73,7 +73,9 @@ impl ConfigValidator {
 
         // Validate TLS configuration if present
         if let Some(tls_config) = &config.tls {
-            Self::validate_tls_config(tls_config).map_err(|e| errors.push(e)).ok();
+            Self::validate_tls_config(tls_config)
+                .map_err(|e| errors.push(e))
+                .ok();
         }
 
         if let Err(conflict_error_list) = Self::check_route_conflicts(&config.routes) {
@@ -150,7 +152,8 @@ impl ConfigValidator {
                 // Validate redirect target URL format
                 if target.starts_with("http://") || target.starts_with("https://") {
                     Self::validate_url(target, &format!("route '{path}' redirect target"))
-                        .map_err(|e| errors.push(e)).ok();
+                        .map_err(|e| errors.push(e))
+                        .ok();
                 }
 
                 // Validate redirect status code
@@ -205,7 +208,9 @@ impl ConfigValidator {
 
         // Validate rate limiting configuration if present
         if let Some(rate_limit) = rate_limit {
-            Self::validate_rate_limit(path, rate_limit).map_err(|e| errors.push(e)).ok();
+            Self::validate_rate_limit(path, rate_limit)
+                .map_err(|e| errors.push(e))
+                .ok();
         }
 
         let path_rewrite = match config {
@@ -218,7 +223,9 @@ impl ConfigValidator {
 
         // Validate path rewrite configuration if present
         if let Some(path_rewrite) = path_rewrite {
-            Self::validate_path_rewrite(path, path_rewrite).map_err(|e| errors.push(e)).ok();
+            Self::validate_path_rewrite(path, path_rewrite)
+                .map_err(|e| errors.push(e))
+                .ok();
         }
 
         if errors.is_empty() {
