@@ -59,7 +59,6 @@ impl Default for Http3Config {
 pub enum Http3CongestionControl {
     Cubic,
     Reno,
-    Bbr,
 }
 
 impl Default for ProtocolConfig {

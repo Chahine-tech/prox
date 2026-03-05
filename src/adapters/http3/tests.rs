@@ -33,11 +33,9 @@ mod http3_tests {
     fn test_http3_congestion_control_variants() {
         let cubic = Http3CongestionControl::Cubic;
         let reno = Http3CongestionControl::Reno;
-        let bbr = Http3CongestionControl::Bbr;
 
         assert!(matches!(cubic, Http3CongestionControl::Cubic));
         assert!(matches!(reno, Http3CongestionControl::Reno));
-        assert!(matches!(bbr, Http3CongestionControl::Bbr));
     }
 
     #[test]
@@ -62,7 +60,7 @@ mod http3_tests {
             max_stream_data: 100_000_000,
             max_streams_bidi: 1000,
             max_idle_timeout: 600_000,
-            congestion_control: Http3CongestionControl::Bbr,
+            congestion_control: Http3CongestionControl::Reno,
             enable_0rtt: true,
             max_packet_size: Some(65535),
         };
@@ -106,7 +104,6 @@ mod http3_tests {
         let configs = vec![
             (Http3CongestionControl::Cubic, "CUBIC"),
             (Http3CongestionControl::Reno, "Reno"),
-            (Http3CongestionControl::Bbr, "BBR"),
         ];
 
         for (algorithm, name) in configs {
@@ -123,7 +120,6 @@ mod http3_tests {
             match config.congestion_control {
                 Http3CongestionControl::Cubic => assert_eq!(name, "CUBIC"),
                 Http3CongestionControl::Reno => assert_eq!(name, "Reno"),
-                Http3CongestionControl::Bbr => assert_eq!(name, "BBR"),
             }
         }
     }

@@ -193,7 +193,6 @@ mod tests {
         match config.congestion_control {
             Http3CongestionControl::Cubic => { /* Valid variant */ }
             Http3CongestionControl::Reno => { /* Valid variant */ }
-            Http3CongestionControl::Bbr => { /* Valid variant */ }
         }
     }
 }

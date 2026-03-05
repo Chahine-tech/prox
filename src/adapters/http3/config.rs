@@ -32,7 +32,6 @@ impl QuicheConfig {
         let cc_algorithm = match http3_config.congestion_control {
             Http3CongestionControl::Cubic => CongestionControlAlgorithm::CUBIC,
             Http3CongestionControl::Reno => CongestionControlAlgorithm::Reno,
-            Http3CongestionControl::Bbr => CongestionControlAlgorithm::BBR,
         };
         config.set_cc_algorithm(cc_algorithm);
         config.set_max_idle_timeout(http3_config.max_idle_timeout);
@@ -114,13 +113,6 @@ mod tests {
         };
         let reno_result = QuicheConfig::new(&reno_config, "cert.pem", "key.pem");
         assert!(reno_result.is_err());
-
-        let bbr_config = Http3Config {
-            congestion_control: Http3CongestionControl::Bbr,
-            ..create_test_http3_config()
-        };
-        let bbr_result = QuicheConfig::new(&bbr_config, "cert.pem", "key.pem");
-        assert!(bbr_result.is_err()); // Expected due to missing certs
     }
 
     #[test]
